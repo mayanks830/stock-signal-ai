@@ -1,0 +1,21 @@
+# Environment & secrets
+.env
+
+# Database
+trading.db
+signal_history.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# OS
+.DS_Store
+Thumbs.db
