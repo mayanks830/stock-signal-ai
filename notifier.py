@@ -1,6 +1,6 @@
-import requests
 from datetime import datetime
 from config import DISCORD_WEBHOOK_URL
+from utils import fetch_with_retry
 
 CONFIDENCE_EMOJI = {"HIGH": "🟢", "MEDIUM": "🟡"}
 CONFIDENCE_COLOR = {"HIGH": 0x00C851, "MEDIUM": 0xFFBB33}
@@ -64,7 +64,7 @@ def build_embed(signal: dict) -> dict:
 def send_signals(signals: list[dict], market_context: dict = None) -> None:
     if not signals:
         payload = {"content": "📊 **Daily Market Scan** — No strong buy signals today. Staying patient."}
-        requests.post(DISCORD_WEBHOOK_URL, json=payload)
+        fetch_with_retry(DISCORD_WEBHOOK_URL, method="post", timeout=15, json=payload)
         return
 
     high = [s for s in signals if s.get("confidence", "").upper() == "HIGH"]
@@ -85,14 +85,88 @@ def send_signals(signals: list[dict], market_context: dict = None) -> None:
             f"Filters: $1B+ revenue · 3%+ WoW · News catalyst · Max 2/sector · No repeats within 7d"
         ),
     }
-    requests.post(DISCORD_WEBHOOK_URL, json=header)
+    fetch_with_retry(DISCORD_WEBHOOK_URL, method="post", timeout=15, json=header)
 
     for signal in high + medium:
-        resp = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [build_embed(signal)]})
+        resp = fetch_with_retry(DISCORD_WEBHOOK_URL, method="post", timeout=15, json={"embeds": [build_embed(signal)]})
         if resp.status_code not in (200, 204):
             print(f"[!] Discord error for {signal['ticker']}: {resp.status_code}")
         else:
             print(f"  Sent: {signal['ticker']} ({signal.get('confidence')})")
+
+
+def send_watchlist_report(pdf_path: str, equities: list[dict], analyses: list[dict]) -> None:
+    """Send the watchlist PDF report to Discord as an attachment with a summary."""
+    # Build summary text
+    valid = [s for s in equities if not s.get("error") and s.get("daily_change_pct") is not None]
+    signal_count = len([a for a in analyses if a.get("signal") in ("BUY", "SELL")])
+
+    top_mover = None
+    if valid:
+        top = max(valid, key=lambda x: abs(x.get("daily_change_pct", 0)))
+        daily = top.get("daily_change_pct", 0)
+        top_mover = f"{top['ticker']} {daily:+.1f}%"
+
+    summary = (
+        f"\U0001f4ca **Daily Watchlist Report** \u2014 {datetime.now().strftime('%B %d, %Y')}"
+        f" | {signal_count} signal(s)"
+    )
+    if top_mover:
+        summary += f" | Top mover: {top_mover}"
+
+    try:
+        with open(pdf_path, "rb") as f:
+            resp = fetch_with_retry(
+                DISCORD_WEBHOOK_URL,
+                method="post",
+                timeout=15,
+                data={"content": summary},
+                files={"file": (pdf_path.split("/")[-1].split("\\")[-1], f, "application/pdf")},
+            )
+        if resp.status_code in (200, 204):
+            print(f"Watchlist report sent to Discord.")
+        else:
+            print(f"[!] Discord upload error: {resp.status_code} — {resp.text[:200]}")
+    except Exception as e:
+        print(f"[!] Failed to send watchlist report to Discord: {e}")
+
+
+def send_congress_alert(trade: dict) -> None:
+    """Send a Discord alert for a large congressional trade."""
+    if not DISCORD_WEBHOOK_URL:
+        return
+
+    action = trade.get("action", "TRADE")
+    color = 0x00C851 if action == "BUY" else 0xF44336 if action == "SELL" else 0x9E9E9E
+    action_emoji = "\U0001f7e2" if action == "BUY" else "\U0001f534" if action == "SELL" else "\u26aa"
+    party = trade.get("party", "?")
+    party_emoji = "\U0001f535" if party == "D" else "\U0001f534" if party == "R" else "\u26aa"
+
+    ticker = trade.get("ticker") or trade.get("company", "N/A")
+    amount = trade.get("amount", "N/A")
+    gap = trade.get("reporting_gap")
+    gap_str = f"{gap} days" if gap is not None else "N/A"
+
+    embed = {
+        "title": f"{action_emoji} Congress {action}: {trade.get('filer', 'Unknown')} ({party}-{trade.get('chamber', '?')})",
+        "color": color,
+        "fields": [
+            {"name": "Ticker", "value": ticker, "inline": True},
+            {"name": "Amount", "value": amount, "inline": True},
+            {"name": "Action", "value": action, "inline": True},
+            {"name": "Company", "value": trade.get("company", "N/A"), "inline": True},
+            {"name": "Trade Date", "value": trade.get("tx_date", "N/A"), "inline": True},
+            {"name": "Reporting Gap", "value": gap_str, "inline": True},
+        ],
+        "footer": {
+            "text": f"Congressional Trade Alert | {party_emoji} {party} | {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        },
+    }
+    resp = fetch_with_retry(DISCORD_WEBHOOK_URL, method="post", timeout=15, json={"embeds": [embed]})
+    if resp.status_code in (200, 204):
+        print(f"  Congress alert sent: {trade.get('filer')} {action} {ticker} {amount}")
+    else:
+        print(f"  [!] Congress alert Discord error: {resp.status_code}")
 
 
 def send_performance_report(reports: list[dict]) -> None:
@@ -122,6 +196,6 @@ def send_performance_report(reports: list[dict]) -> None:
         "fields": fields[:25],  # Discord embed field limit
         "footer": {"text": f"✅ {len(wins)} wins · ❌ {len(losses)} losses"},
     }
-    resp = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]})
+    resp = fetch_with_retry(DISCORD_WEBHOOK_URL, method="post", timeout=15, json={"embeds": [embed]})
     if resp.status_code in (200, 204):
         print(f"Performance report sent: {len(reports)} signals reviewed.")

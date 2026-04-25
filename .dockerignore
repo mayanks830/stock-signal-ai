@@ -1,0 +1,13 @@
+.env
+.git
+__pycache__
+*.pyc
+trading.db
+signal_history.json
+frontend/node_modules
+frontend/dist
+reports/
+.venv
+venv
+.DS_Store
+Thumbs.db

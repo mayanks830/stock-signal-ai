@@ -1,6 +1,6 @@
-import requests
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
+from utils import fetch_with_retry
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
@@ -13,7 +13,7 @@ def get_earnings_dates(tickers: list[str]) -> dict[str, str]:
     earnings_map = {}
     try:
         url = "https://stockanalysis.com/stocks/earnings-calendar/"
-        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp = fetch_with_retry(url, headers=HEADERS, timeout=15)
         if resp.status_code != 200:
             return {}
 

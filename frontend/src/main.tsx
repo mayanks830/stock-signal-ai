@@ -5,7 +5,7 @@ import App from './App.tsx'
 import './index.css'
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { refetchInterval: 60_000, staleTime: 30_000 } },
+  defaultOptions: { queries: { refetchInterval: 60_000, staleTime: 30_000, refetchOnWindowFocus: true } },
 })
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

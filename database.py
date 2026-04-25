@@ -1,6 +1,8 @@
 import sqlite3
 import json
 import os
+import hashlib
+import secrets
 from datetime import datetime
 from config import DB_PATH
 
@@ -14,6 +16,13 @@ def get_conn() -> sqlite3.Connection:
 def init_db() -> None:
     with get_conn() as conn:
         conn.executescript("""
+        CREATE TABLE IF NOT EXISTS watchlist (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker      TEXT NOT NULL UNIQUE,
+            category    TEXT NOT NULL DEFAULT 'equity',
+            added_at    TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS signals (
             id                      INTEGER PRIMARY KEY AUTOINCREMENT,
             ticker                  TEXT NOT NULL,
@@ -51,7 +60,22 @@ def init_db() -> None:
             hit_stop        INTEGER DEFAULT 0,
             outcome         TEXT DEFAULT 'OPEN'
         );
+
+        CREATE TABLE IF NOT EXISTS congress_alerts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_key       TEXT NOT NULL UNIQUE,
+            alerted_at      TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS users (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            username        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            password_hash   TEXT NOT NULL,
+            created_at      TEXT NOT NULL,
+            is_approved     INTEGER DEFAULT 0
+        );
         """)
+    seed_watchlist_from_config()
     print("Database initialized.")
 
 
@@ -193,3 +217,139 @@ def get_all_performance() -> list[dict]:
             ORDER BY s.signaled_at DESC
         """).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── Watchlist ────────────────────────────────────────────────────────────────
+
+def get_watchlist(category: str | None = None) -> list[dict]:
+    with get_conn() as conn:
+        if category:
+            rows = conn.execute(
+                "SELECT * FROM watchlist WHERE category = ? ORDER BY ticker", (category,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM watchlist ORDER BY category, ticker").fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_to_watchlist(ticker: str, category: str = "equity") -> dict:
+    ticker = ticker.upper().strip()
+    category = category.lower().strip()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO watchlist (ticker, category, added_at) VALUES (?, ?, ?)",
+            (ticker, category, datetime.now().isoformat()),
+        )
+    return {"ticker": ticker, "category": category}
+
+
+def remove_from_watchlist(ticker: str) -> bool:
+    ticker = ticker.upper().strip()
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM watchlist WHERE ticker = ?", (ticker,))
+    return cur.rowcount > 0
+
+
+def seed_watchlist_from_config() -> None:
+    """Seed watchlist from config.py lists if the table is empty."""
+    with get_conn() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM watchlist").fetchone()[0]
+        if count > 0:
+            return
+
+    from config import WATCHLIST_EQUITIES, WATCHLIST_ETFS
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        for t in WATCHLIST_EQUITIES:
+            conn.execute(
+                "INSERT OR IGNORE INTO watchlist (ticker, category, added_at) VALUES (?, 'equity', ?)",
+                (t.upper(), now),
+            )
+        for t in WATCHLIST_ETFS:
+            conn.execute(
+                "INSERT OR IGNORE INTO watchlist (ticker, category, added_at) VALUES (?, 'etf', ?)",
+                (t.upper(), now),
+            )
+
+
+# ── Users ────────────────────────────────────────────────────────────────────
+
+def _hash_password(password: str, salt: str = "") -> str:
+    if not salt:
+        salt = secrets.token_hex(16)
+    h = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
+    return f"{salt}${h}"
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    salt = stored.split("$")[0]
+    return _hash_password(password, salt) == stored
+
+
+def create_user(username: str, password: str, auto_approve: bool = False) -> dict | None:
+    """Create a new user. Returns user dict or None if username taken."""
+    username = username.strip()
+    if not username or not password:
+        return None
+    pw_hash = _hash_password(password)
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, created_at, is_approved) VALUES (?, ?, ?, ?)",
+                (username, pw_hash, datetime.now().isoformat(), 1 if auto_approve else 0),
+            )
+        return {"username": username, "is_approved": auto_approve}
+    except sqlite3.IntegrityError:
+        return None
+
+
+def authenticate_user(username: str, password: str) -> dict | None:
+    """Verify credentials. Returns user dict or None."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE username = ?", (username.strip(),)
+        ).fetchone()
+    if not row:
+        return None
+    if not _verify_password(password, row["password_hash"]):
+        return None
+    return dict(row)
+
+
+def get_all_users() -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT id, username, created_at, is_approved FROM users ORDER BY created_at").fetchall()
+    return [dict(r) for r in rows]
+
+
+def approve_user(username: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute("UPDATE users SET is_approved = 1 WHERE username = ?", (username.strip(),))
+    return cur.rowcount > 0
+
+
+def delete_user(username: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM users WHERE username = ?", (username.strip(),))
+    return cur.rowcount > 0
+
+
+def get_user_count() -> int:
+    with get_conn() as conn:
+        return conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+
+# ── Congress Alerts ──────────────────────────────────────────────────────────
+
+def is_congress_alert_sent(trade_key: str) -> bool:
+    with get_conn() as conn:
+        row = conn.execute("SELECT 1 FROM congress_alerts WHERE trade_key = ?", (trade_key,)).fetchone()
+    return row is not None
+
+
+def mark_congress_alert_sent(trade_key: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO congress_alerts (trade_key, alerted_at) VALUES (?, ?)",
+            (trade_key, datetime.now().isoformat()),
+        )

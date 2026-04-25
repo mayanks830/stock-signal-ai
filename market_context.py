@@ -1,4 +1,4 @@
-import requests
+from utils import fetch_with_retry
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -24,7 +24,7 @@ SECTOR_ETFS = {
 def _fetch_wow(symbol: str) -> float | None:
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=14d&interval=1d"
-        resp = requests.get(url, headers=HEADERS, timeout=10)
+        resp = fetch_with_retry(url, headers=HEADERS, timeout=10)
         if resp.status_code != 200:
             return None
         result = resp.json().get("chart", {}).get("result", [])
@@ -43,7 +43,7 @@ def _fetch_wow(symbol: str) -> float | None:
 def get_vix() -> float | None:
     try:
         url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?range=1d&interval=1d"
-        resp = requests.get(url, headers=HEADERS, timeout=10)
+        resp = fetch_with_retry(url, headers=HEADERS, timeout=10)
         result = resp.json().get("chart", {}).get("result", [])
         if not result:
             return None
