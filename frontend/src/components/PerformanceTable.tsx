@@ -1,4 +1,7 @@
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
+
+type SortKey = 'ticker' | 'sector' | 'confidence' | 'signaled_at' | 'entry_price' | 'exit_price' | 'pct_change' | 'outcome'
 
 export default function PerformanceTable() {
   const { data, isLoading } = useQuery({
@@ -6,26 +9,70 @@ export default function PerformanceTable() {
     queryFn: () => fetch('/api/performance').then(r => r.json()),
   })
 
+  const [sortKey, setSortKey] = useState<SortKey>('signaled_at')
+  const [sortAsc, setSortAsc] = useState(false)
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortAsc(!sortAsc)
+    else { setSortKey(key); setSortAsc(key === 'ticker' || key === 'sector') }
+  }
+
+  const sortIcon = (key: SortKey) =>
+    sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : ''
+
+  const sorted = useMemo(() => {
+    if (!data?.length) return []
+    return [...data].sort((a: any, b: any) => {
+      let av = a[sortKey], bv = b[sortKey]
+      if (sortKey === 'signaled_at') { av = av || ''; bv = bv || '' }
+      if (sortKey === 'confidence') {
+        const rank: Record<string, number> = { HIGH: 2, MEDIUM: 1 }
+        av = rank[av] ?? 0; bv = rank[bv] ?? 0
+      }
+      if (sortKey === 'outcome') {
+        const rank: Record<string, number> = { WIN: 3, LOSS: 2, OPEN: 1 }
+        av = rank[av || 'OPEN'] ?? 0; bv = rank[bv || 'OPEN'] ?? 0
+      }
+      if (av == null) return 1
+      if (bv == null) return -1
+      if (av < bv) return sortAsc ? -1 : 1
+      if (av > bv) return sortAsc ? 1 : -1
+      return 0
+    })
+  }, [data, sortKey, sortAsc])
+
   if (isLoading) return <div className="text-content-muted text-sm py-8 text-center">Loading...</div>
   if (!data?.length) return <div className="text-content-faint text-sm py-8 text-center">No completed signals yet.</div>
+
+  const columns: { key: SortKey; label: string; align: string }[] = [
+    { key: 'ticker', label: 'Ticker', align: 'text-left' },
+    { key: 'sector', label: 'Sector', align: 'text-left' },
+    { key: 'confidence', label: 'Confidence', align: 'text-left' },
+    { key: 'signaled_at', label: 'Signal Date', align: 'text-left' },
+    { key: 'entry_price', label: 'Entry', align: 'text-right' },
+    { key: 'exit_price', label: 'Exit', align: 'text-right' },
+    { key: 'pct_change', label: 'P&L', align: 'text-right' },
+    { key: 'outcome', label: 'Outcome', align: 'text-center' },
+  ]
 
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="text-content-muted text-xs border-b border-border">
-            <th className="text-left py-3 pr-4">Ticker</th>
-            <th className="text-left py-3 pr-4">Sector</th>
-            <th className="text-left py-3 pr-4">Confidence</th>
-            <th className="text-left py-3 pr-4">Signal Date</th>
-            <th className="text-right py-3 pr-4">Entry</th>
-            <th className="text-right py-3 pr-4">Exit</th>
-            <th className="text-right py-3 pr-4">P&L</th>
-            <th className="text-center py-3">Outcome</th>
+            {columns.map(col => (
+              <th
+                key={col.key}
+                className={`${col.align} py-3 ${col.key !== 'outcome' ? 'pr-4' : ''} cursor-pointer select-none hover:text-content-primary transition`}
+                onClick={() => toggleSort(col.key)}
+              >
+                {col.label}{sortIcon(col.key)}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
-          {data.map((r: any, i: number) => {
+          {sorted.map((r: any, i: number) => {
             const pct = r.pct_change
             const outcome = r.outcome || 'OPEN'
             return (

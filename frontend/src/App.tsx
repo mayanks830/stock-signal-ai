@@ -2,37 +2,40 @@ import { useState, useEffect, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTheme } from './hooks/useTheme'
 import SignalFeed from './components/SignalFeed'
-import PerformanceTable from './components/PerformanceTable'
-import OpenPositions from './components/OpenPositions'
-import ReportsTab from './components/ReportsTab'
+import Portfolio from './components/Portfolio'
 import StockSearch from './components/StockSearch'
 import WatchlistManager from './components/WatchlistManager'
 import CongressTrades from './components/CongressTrades'
 import StatsBar from './components/StatsBar'
-import ContactForm from './components/ContactForm'
+import FeedbackModal from './components/FeedbackModal'
 
-const TABS = ['Signals', 'Positions', 'Performance', 'Congress', 'Search', 'Watchlist', 'Reports', 'Contact'] as const
-type Tab = typeof TABS[number]
+const TAB_CONFIG = [
+  { id: 'picks', label: 'AI Picks', icon: '\u2728', subtitle: 'Daily AI-generated buy signals' },
+  { id: 'trades', label: 'My Trades', icon: '\uD83D\uDCBC', subtitle: 'Your open positions & trade history' },
+  { id: 'congress', label: 'Congress Trades', icon: '\uD83C\uDFDB\uFE0F', subtitle: 'What politicians are trading' },
+  { id: 'lookup', label: 'Stock Lookup', icon: '\uD83D\uDD0D', subtitle: 'Research any ticker with AI' },
+  { id: 'watchlist', label: 'Watchlist', icon: '\u2B50', subtitle: 'Stocks you\'re watching' },
+] as const
 
-function getTabFromHash(): Tab {
-  const hash = window.location.hash.slice(1).split('/')[0]
-  const match = TABS.find(t => t.toLowerCase() === hash.toLowerCase())
-  return match || 'Signals'
+type TabId = typeof TAB_CONFIG[number]['id']
+
+function getTabFromHash(): TabId {
+  const hash = window.location.hash.slice(1).split('/')[0].toLowerCase()
+  const match = TAB_CONFIG.find(t => t.id === hash)
+  return match?.id || 'picks'
 }
 
-const TAB_GROUPS: { label: string; tabs: Tab[] }[] = [
-  { label: 'Markets', tabs: ['Signals', 'Positions', 'Performance'] },
-  { label: 'Research', tabs: ['Congress', 'Search', 'Watchlist'] },
-  { label: 'More', tabs: ['Reports', 'Contact'] },
-]
-
 function App() {
-  const [tab, setTab] = useState<Tab>(getTabFromHash)
+  const [tab, setTab] = useState<TabId>(getTabFromHash)
   const { theme, toggle } = useTheme()
+  const [reportsOpen, setReportsOpen] = useState(false)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
 
-  const switchTab = (t: Tab) => {
-    setTab(t)
-    window.location.hash = t.toLowerCase()
+  const currentTab = TAB_CONFIG.find(t => t.id === tab)!
+
+  const switchTab = (id: TabId) => {
+    setTab(id)
+    window.location.hash = id
   }
   const [scanning, setScanning] = useState(false)
   const [scanStep, setScanStep] = useState('')
@@ -46,6 +49,14 @@ function App() {
     events.forEach(e => window.addEventListener(e, reset))
     return () => { clearTimeout(timer); events.forEach(e => window.removeEventListener(e, reset)) }
   }, [logout])
+
+  // Close reports dropdown on outside click
+  useEffect(() => {
+    if (!reportsOpen) return
+    const close = () => setReportsOpen(false)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [reportsOpen])
 
   const { data: stats } = useQuery({
     queryKey: ['stats'],
@@ -63,6 +74,11 @@ function App() {
       return res.json()
     },
     refetchInterval: 5 * 60 * 1000,
+  })
+
+  const { data: reports } = useQuery({
+    queryKey: ['reports'],
+    queryFn: () => fetch('/api/reports').then(r => r.json()),
   })
 
   const triggerScan = async () => {
@@ -112,6 +128,50 @@ function App() {
               <p className="text-xs text-content-muted mt-1 max-w-[200px]">{scanStep}</p>
             )}
           </div>
+
+          {/* Reports dropdown */}
+          <div className="relative">
+            <button
+              onClick={e => { e.stopPropagation(); setReportsOpen(!reportsOpen) }}
+              className="p-2 rounded-lg bg-surface-tertiary text-content-muted hover:text-content-primary transition"
+              title="Download reports"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </button>
+            {reportsOpen && (
+              <div className="absolute right-0 top-full mt-1 w-56 bg-surface-secondary border border-border rounded-lg shadow-xl z-50 py-1">
+                {reports?.length > 0 ? (
+                  reports.map((r: any) => (
+                    <a
+                      key={r.filename}
+                      href={`/api/reports/${r.filename}`}
+                      className="block px-3 py-2 text-xs text-content-secondary hover:bg-surface-hover transition"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      {r.filename}
+                      <span className="block text-content-faint text-[10px]">{r.size}</span>
+                    </a>
+                  ))
+                ) : (
+                  <div className="px-3 py-2 text-xs text-content-faint">No reports available</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Feedback button */}
+          <button
+            onClick={() => setFeedbackOpen(true)}
+            className="p-2 rounded-lg bg-surface-tertiary text-content-muted hover:text-content-primary transition"
+            title="Send feedback"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+          </button>
+
           <button
             onClick={toggle}
             className="p-2 rounded-lg bg-surface-tertiary text-content-muted hover:text-content-primary transition"
@@ -145,49 +205,36 @@ function App() {
       <StatsBar stats={stats} />
 
       <nav className="px-3 sm:px-6 py-3 border-b border-border">
-        <div className="flex flex-wrap gap-1 sm:hidden">
-          {TABS.map(t => (
+        <div className="flex flex-wrap gap-1">
+          {TAB_CONFIG.map(t => (
             <button
-              key={t}
-              onClick={() => switchTab(t)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                tab === t ? 'bg-blue-600 text-white' : 'text-content-muted hover:text-content-primary hover:bg-surface-hover'
+              key={t.id}
+              onClick={() => switchTab(t.id)}
+              className={`flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition ${
+                tab === t.id ? 'bg-blue-600 text-white' : 'text-content-muted hover:text-content-primary hover:bg-surface-hover'
               }`}
             >
-              {t}
+              <span className="text-sm sm:text-base leading-none">{t.icon}</span>
+              {t.label}
             </button>
-          ))}
-        </div>
-        <div className="hidden sm:flex items-center gap-1">
-          {TAB_GROUPS.map((group, gi) => (
-            <div key={group.label} className="flex items-center">
-              {gi > 0 && <div className="w-px h-5 bg-border mx-2" />}
-              {group.tabs.map(t => (
-                <button
-                  key={t}
-                  onClick={() => switchTab(t)}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                    tab === t ? 'bg-blue-600 text-white' : 'text-content-muted hover:text-content-primary hover:bg-surface-hover'
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
           ))}
         </div>
       </nav>
 
-      <main className="px-3 sm:px-6 py-4">
-        {tab === 'Signals' && <SignalFeed />}
-        {tab === 'Positions' && <OpenPositions />}
-        {tab === 'Performance' && <PerformanceTable />}
-        {tab === 'Reports' && <ReportsTab />}
-        {tab === 'Search' && <StockSearch />}
-        {tab === 'Watchlist' && <WatchlistManager />}
-        {tab === 'Congress' && <CongressTrades />}
-        {tab === 'Contact' && <ContactForm />}
+      {/* Page subtitle */}
+      <div className="px-3 sm:px-6 pt-4 pb-1">
+        <p className="text-xs text-content-faint">{currentTab.subtitle}</p>
+      </div>
+
+      <main className="px-3 sm:px-6 py-3">
+        {tab === 'picks' && <SignalFeed />}
+        {tab === 'trades' && <Portfolio />}
+        {tab === 'lookup' && <StockSearch />}
+        {tab === 'watchlist' && <WatchlistManager />}
+        {tab === 'congress' && <CongressTrades />}
       </main>
+
+      {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} username={me?.username} />}
     </div>
   )
 }

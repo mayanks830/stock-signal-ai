@@ -1,14 +1,18 @@
 from fastapi import APIRouter, BackgroundTasks
-from fetcher import get_sp500_tickers, fetch_candidates
-from analyzer import analyze_stocks
-from notifier import send_signals
+from fetcher import get_sp500_tickers, fetch_candidates, fetch_watchlist_data
+from analyzer import analyze_stocks, analyze_watchlist
+from notifier import send_signals, send_watchlist_report
 from history import record_signals
 from market_context import build_market_context
-from database import get_all_signals
+from database import get_all_signals, get_watchlist
+from report import generate_watchlist_pdf
 
 router = APIRouter()
 _scan_running = False
 _scan_status = {"step": "", "error": "", "signals_found": 0}
+
+_watchlist_scan_running = False
+_watchlist_scan_status = {"step": "", "error": ""}
 
 
 def _do_scan():
@@ -48,6 +52,60 @@ def _do_scan():
         _scan_running = False
 
 
+def _do_watchlist_scan():
+    global _watchlist_scan_running, _watchlist_scan_status
+    try:
+        _watchlist_scan_status = {"step": "Fetching market context...", "error": ""}
+        market_context = build_market_context()
+
+        equity_tickers = [w["ticker"] for w in get_watchlist("equity")]
+        etf_tickers = [w["ticker"] for w in get_watchlist("etf")]
+
+        _watchlist_scan_status["step"] = f"Fetching equity data ({len(equity_tickers)} tickers)..."
+        equities = fetch_watchlist_data(equity_tickers, include_technicals=True)
+
+        _watchlist_scan_status["step"] = f"Fetching ETF data ({len(etf_tickers)} tickers)..."
+        etfs = fetch_watchlist_data(etf_tickers, include_technicals=False)
+
+        _watchlist_scan_status["step"] = "Running AI analysis on watchlist..."
+        try:
+            analyses = analyze_watchlist(equities, market_context)
+        except Exception as e:
+            print(f"  [!] AI analysis failed: {e}")
+            analyses = []
+
+        _watchlist_scan_status["step"] = "Fetching social data..."
+        try:
+            from social import enrich_with_social_data
+            enrich_with_social_data(equities)
+        except Exception as e:
+            print(f"  [!] Social data failed: {e}")
+
+        _watchlist_scan_status["step"] = "Generating PDF report..."
+        pdf_path = generate_watchlist_pdf(equities, etfs, market_context, analyses)
+
+        _watchlist_scan_status["step"] = "Sending report to Discord..."
+        send_watchlist_report(pdf_path, equities, analyses)
+
+        _watchlist_scan_status["step"] = "Sending email..."
+        try:
+            from emailer import send_report_email
+            send_report_email(pdf_path, equities, analyses)
+        except Exception as e:
+            print(f"  [!] Email failed: {e}")
+
+        _watchlist_scan_status["step"] = "Done! Report generated."
+        print(f"[Watchlist Scan Complete] Report: {pdf_path}", flush=True)
+    except Exception as e:
+        _watchlist_scan_status["step"] = "Error"
+        _watchlist_scan_status["error"] = str(e)
+        print(f"[!] Watchlist scan error: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+    finally:
+        _watchlist_scan_running = False
+
+
 @router.post("/scan/trigger")
 def trigger_scan(background_tasks: BackgroundTasks):
     global _scan_running
@@ -61,6 +119,21 @@ def trigger_scan(background_tasks: BackgroundTasks):
 @router.get("/scan/status")
 def scan_status():
     return {"running": _scan_running, **_scan_status}
+
+
+@router.post("/scan/watchlist")
+def trigger_watchlist_scan(background_tasks: BackgroundTasks):
+    global _watchlist_scan_running
+    if _watchlist_scan_running:
+        return {"status": "already_running", **_watchlist_scan_status}
+    _watchlist_scan_running = True
+    background_tasks.add_task(_do_watchlist_scan)
+    return {"status": "started"}
+
+
+@router.get("/scan/watchlist/status")
+def watchlist_scan_status():
+    return {"running": _watchlist_scan_running, **_watchlist_scan_status}
 
 
 @router.get("/stats")

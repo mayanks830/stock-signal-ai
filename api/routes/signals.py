@@ -12,16 +12,27 @@ HEADERS = {
 }
 
 
+def _parse_signal_json(s: dict) -> None:
+    """Parse news_json and analysis_json into proper objects."""
+    if s.get("news_json"):
+        try:
+            s["news"] = json.loads(s["news_json"])
+        except Exception:
+            s["news"] = []
+    s.pop("news_json", None)
+    if s.get("analysis_json"):
+        try:
+            s["analysis"] = json.loads(s["analysis_json"])
+        except Exception:
+            s["analysis"] = None
+    s.pop("analysis_json", None)
+
+
 @router.get("/signals")
 def list_signals(limit: int = 50, offset: int = 0):
     signals = get_all_signals(limit, offset)
     for s in signals:
-        if s.get("news_json"):
-            try:
-                s["news"] = json.loads(s["news_json"])
-            except Exception:
-                s["news"] = []
-        del s["news_json"]
+        _parse_signal_json(s)
     return signals
 
 
@@ -29,12 +40,7 @@ def list_signals(limit: int = 50, offset: int = 0):
 def open_signals():
     signals = get_open_signals()
     for s in signals:
-        if s.get("news_json"):
-            try:
-                s["news"] = json.loads(s["news_json"])
-            except Exception:
-                s["news"] = []
-        s.pop("news_json", None)
+        _parse_signal_json(s)
     return signals
 
 
@@ -43,12 +49,7 @@ def get_signal(signal_id: int):
     signal = get_signal_by_id(signal_id)
     if not signal:
         raise HTTPException(status_code=404, detail="Signal not found")
-    if signal.get("news_json"):
-        try:
-            signal["news"] = json.loads(signal["news_json"])
-        except Exception:
-            signal["news"] = []
-    del signal["news_json"]
+    _parse_signal_json(signal)
     return signal
 
 

@@ -154,6 +154,11 @@ def main():
         check_congress_alerts()
         return
 
+    if "--congress-enrich" in sys.argv:
+        from congress import enrich_congress_trades
+        enrich_congress_trades()
+        return
+
     # Start API server in background thread
     api_thread = threading.Thread(target=start_api, daemon=True)
     api_thread.start()
@@ -171,6 +176,22 @@ def main():
             getattr(schedule.every(), day).at(hour).do(check_congress_alerts)
     print(f"Congress alerts: Mon-Fri every 2h (min ${CONGRESS_ALERT_MIN:,.0f})")
 
+    # Congress trade enrichment — daily at 17:00 (after market close)
+    from congress import enrich_congress_trades
+    for day in ["monday", "tuesday", "wednesday", "thursday", "friday"]:
+        getattr(schedule.every(), day).at("17:00").do(enrich_congress_trades)
+    print("Congress enrichment: Mon-Fri at 17:00")
+
+    # Seed congress trades on startup (background thread so it doesn't block)
+    def _initial_enrich():
+        import time as _t
+        _t.sleep(10)  # Wait for API to be ready
+        try:
+            enrich_congress_trades()
+        except Exception as e:
+            print(f"[Congress Enrich] Startup enrichment failed: {e}")
+    threading.Thread(target=_initial_enrich, daemon=True).start()
+
     # Watchlist scan daily at same time as regular scan
     if WATCHLIST_SCAN_ENABLED:
         for day in ["monday", "tuesday", "wednesday", "thursday", "friday"]:
@@ -178,7 +199,7 @@ def main():
         print(f"Watchlist scan: Mon-Fri at {SCAN_HOUR:02d}:30")
 
     print(f"Scheduler running. Scans: Mon-Fri at {SCAN_HOUR:02d}:00 | Performance check: daily 09:00")
-    print("Flags: --now (scan) | --track (performance) | --watchlist (watchlist) | --congress-alerts (check now)")
+    print("Flags: --now (scan) | --track (performance) | --watchlist (watchlist) | --congress-alerts | --congress-enrich")
 
     while True:
         schedule.run_pending()

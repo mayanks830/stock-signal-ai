@@ -15,7 +15,7 @@ TOP_N_STOCKS = int(os.getenv("TOP_N_STOCKS", 50))
 SCAN_DAY = os.getenv("SCAN_DAY", "monday")
 SCAN_HOUR = int(os.getenv("SCAN_HOUR", 16))  # 4PM ET market close
 
-MIN_WOW_PCT = float(os.getenv("MIN_WOW_PCT", 3.0))       # Minimum WoW % change to qualify
+MIN_WOW_PCT = float(os.getenv("MIN_WOW_PCT", 1.5))       # Minimum WoW % change to qualify
 MIN_PRICE = float(os.getenv("MIN_PRICE", 10.0))           # Filter out cheap stocks
 MAX_PER_SECTOR = int(os.getenv("MAX_PER_SECTOR", 2))      # Max signals per sector
 SIGNAL_COOLDOWN_DAYS = int(os.getenv("SIGNAL_COOLDOWN_DAYS", 7))  # Skip recent signals

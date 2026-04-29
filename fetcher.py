@@ -217,20 +217,22 @@ def fetch_candidates(tickers: list[str]) -> list[dict]:
     candidates.sort(key=lambda x: x["wow_change_pct"], reverse=True)
     top = candidates[:TOP_N_STOCKS]
 
-    # Fetch and score news
+    # Fetch and score news (best effort — stocks without news still proceed)
     print(f"Fetching news for {len(top)} stocks...")
-    has_news = []
+    news_count = 0
     for i, stock in enumerate(top):
         print(f"  [{i+1}/{len(top)}] {stock['ticker']} news    ", end="\r")
         raw_news = fetch_news(stock["ticker"])
         if raw_news:
             stock["news"] = label_headlines(raw_news)
             stock["sentiment_score"] = score_headlines(raw_news)
-            has_news.append(stock)
+            news_count += 1
+        else:
+            stock["sentiment_score"] = 0.0
         time.sleep(0.4)
 
-    print(f"\n{len(has_news)} stocks with news catalyst. Sending to AI.")
-    return has_news
+    print(f"\n{news_count}/{len(top)} stocks with news. Sending all {len(top)} to AI.")
+    return top
 
 
 def _fetch_price_data_no_filter(ticker: str, range: str = "30d", interval: str = "1d") -> dict | None:

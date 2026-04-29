@@ -1,7 +1,8 @@
 import time
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Path
 
 from congress import fetch_congressional_trades
+from database import get_senator_leaderboard, get_senator_trades
 
 router = APIRouter()
 
@@ -33,3 +34,35 @@ def get_congress_trades(
     _congress_cache[cache_key] = (now, trades)
 
     return {"trades": trades[:limit], "total": len(trades), "cached": False}
+
+
+@router.post("/congress/enrich")
+def trigger_enrich():
+    """Manually trigger congress trade enrichment."""
+    from congress import enrich_congress_trades
+    result = enrich_congress_trades()
+    return result
+
+
+@router.get("/congress/leaderboard")
+def congress_leaderboard():
+    """Return senators ranked by average return on BUY trades."""
+    return get_senator_leaderboard()
+
+
+@router.get("/congress/senator/{name}")
+def congress_senator(name: str = Path(...)):
+    """Return a senator's BUY trades with returns."""
+    trades = get_senator_trades(name)
+    if not trades:
+        return {"filer": name, "trades": [], "avg_return_pct": None}
+
+    returns = [t["return_pct"] for t in trades if t["return_pct"] is not None]
+    avg_return = round(sum(returns) / len(returns), 2) if returns else None
+
+    return {
+        "filer": name,
+        "avg_return_pct": avg_return,
+        "trade_count": len(trades),
+        "trades": trades,
+    }

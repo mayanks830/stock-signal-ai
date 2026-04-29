@@ -47,7 +47,8 @@ def init_db() -> None:
             trend_1m                TEXT,
             reason                  TEXT,
             risk                    TEXT,
-            news_json               TEXT
+            news_json               TEXT,
+            analysis_json           TEXT
         );
 
         CREATE TABLE IF NOT EXISTS signal_performance (
@@ -67,6 +68,23 @@ def init_db() -> None:
             alerted_at      TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS congress_trades (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            filer           TEXT NOT NULL,
+            party           TEXT,
+            chamber         TEXT,
+            ticker          TEXT NOT NULL,
+            action          TEXT NOT NULL,
+            tx_date         TEXT NOT NULL,
+            amount          TEXT,
+            value_numeric   REAL,
+            price_at_trade  REAL,
+            price_current   REAL,
+            return_pct      REAL,
+            updated_at      TEXT,
+            UNIQUE(filer, ticker, action, tx_date)
+        );
+
         CREATE TABLE IF NOT EXISTS users (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             username        TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -75,8 +93,17 @@ def init_db() -> None:
             is_approved     INTEGER DEFAULT 0
         );
         """)
+    # Migrations for existing databases
+    _migrate(conn)
     seed_watchlist_from_config()
     print("Database initialized.")
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns that may be missing from older databases."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(signals)").fetchall()}
+    if "analysis_json" not in cols:
+        conn.execute("ALTER TABLE signals ADD COLUMN analysis_json TEXT")
 
 
 def save_signal(signal: dict, market_context: dict = None) -> int:
@@ -90,8 +117,8 @@ def save_signal(signal: dict, market_context: dict = None) -> int:
                 earnings_within_7d, earnings_date, sentiment_score,
                 vix_at_signal, spy_wow_pct,
                 trend_1d, trend_1w, trend_1m,
-                reason, risk, news_json
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                reason, risk, news_json, analysis_json
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             signal.get("ticker"),
             signal.get("name"),
@@ -116,6 +143,7 @@ def save_signal(signal: dict, market_context: dict = None) -> int:
             signal.get("reason"),
             signal.get("risk"),
             json.dumps(signal.get("news", [])),
+            json.dumps(signal.get("analysis")) if signal.get("analysis") else None,
         ))
         return cur.lastrowid
 
@@ -132,10 +160,13 @@ def get_recent_signal_tickers(days: int) -> set:
 
 def get_all_signals(limit: int = 50, offset: int = 0) -> list[dict]:
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM signals ORDER BY signaled_at DESC LIMIT ? OFFSET ?",
-            (limit, offset)
-        ).fetchall()
+        rows = conn.execute("""
+            SELECT s.*, COALESCE(p.outcome, 'OPEN') AS outcome, p.pct_change
+            FROM signals s
+            LEFT JOIN signal_performance p ON p.signal_id = s.id
+              AND p.id = (SELECT MAX(id) FROM signal_performance WHERE signal_id = s.id)
+            ORDER BY s.signaled_at DESC LIMIT ? OFFSET ?
+        """, (limit, offset)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -353,3 +384,119 @@ def mark_congress_alert_sent(trade_key: str) -> None:
             "INSERT OR IGNORE INTO congress_alerts (trade_key, alerted_at) VALUES (?, ?)",
             (trade_key, datetime.now().isoformat()),
         )
+
+
+# ── Congress Trades (performance tracking) ─────────────────────────────────
+
+def upsert_congress_trade(trade: dict) -> bool:
+    """Insert a congress trade if not already stored. Returns True if inserted."""
+    try:
+        with get_conn() as conn:
+            conn.execute("""
+                INSERT OR IGNORE INTO congress_trades
+                  (filer, party, chamber, ticker, action, tx_date, amount, value_numeric, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                trade.get("filer"),
+                trade.get("party"),
+                trade.get("chamber"),
+                trade.get("ticker"),
+                trade.get("action"),
+                trade.get("tx_date"),
+                trade.get("amount"),
+                trade.get("value_numeric"),
+                datetime.now().isoformat(),
+            ))
+        return True
+    except Exception:
+        return False
+
+
+def get_congress_trades_needing_prices() -> list[dict]:
+    """Get trades that don't have a price_at_trade yet."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, ticker, tx_date FROM congress_trades WHERE price_at_trade IS NULL AND ticker != ''"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_congress_tickers() -> list[str]:
+    """Get distinct tickers from congress_trades."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT ticker FROM congress_trades WHERE ticker != ''"
+        ).fetchall()
+    return [r["ticker"] for r in rows]
+
+
+def update_congress_trade_entry_price(trade_id: int, price: float) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE congress_trades SET price_at_trade = ?, updated_at = ? WHERE id = ?",
+            (round(price, 2), datetime.now().isoformat(), trade_id),
+        )
+
+
+def update_congress_current_prices(ticker: str, current_price: float) -> None:
+    """Update current price and return_pct for all trades of a ticker."""
+    with get_conn() as conn:
+        conn.execute("""
+            UPDATE congress_trades
+            SET price_current = ?,
+                return_pct = CASE
+                    WHEN price_at_trade IS NOT NULL AND price_at_trade > 0
+                    THEN ROUND((? - price_at_trade) / price_at_trade * 100, 2)
+                    ELSE NULL
+                END,
+                updated_at = ?
+            WHERE ticker = ?
+        """, (round(current_price, 2), current_price, datetime.now().isoformat(), ticker))
+
+
+def get_senator_leaderboard() -> list[dict]:
+    """Get senators ranked by average return on BUY trades."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT
+                filer,
+                party,
+                chamber,
+                COUNT(*) as trade_count,
+                ROUND(AVG(return_pct), 2) as avg_return_pct,
+                MAX(return_pct) as best_return_pct,
+                SUM(value_numeric) as total_value
+            FROM congress_trades
+            WHERE action = 'BUY'
+              AND return_pct IS NOT NULL
+            GROUP BY filer
+            HAVING trade_count >= 1
+            ORDER BY avg_return_pct DESC
+        """).fetchall()
+
+        results = []
+        for r in rows:
+            row = dict(r)
+            best = conn.execute("""
+                SELECT ticker, return_pct FROM congress_trades
+                WHERE filer = ? AND action = 'BUY' AND return_pct IS NOT NULL
+                ORDER BY return_pct DESC LIMIT 1
+            """, (row["filer"],)).fetchone()
+            row["best_ticker"] = best["ticker"] if best else None
+            row["best_return_pct"] = best["return_pct"] if best else None
+            results.append(row)
+
+    return results
+
+
+def get_senator_trades(filer: str) -> list[dict]:
+    """Get all BUY trades for a specific senator with returns."""
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT ticker, tx_date, amount, value_numeric,
+                   price_at_trade, price_current, return_pct
+            FROM congress_trades
+            WHERE filer = ? AND action = 'BUY'
+            ORDER BY tx_date DESC
+        """, (filer,)).fetchall()
+    return [dict(r) for r in rows]

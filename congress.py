@@ -247,6 +247,113 @@ def _normalize_trade(obj: dict) -> dict | None:
         return None
 
 
+YAHOO_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept": "application/json",
+    "Referer": "https://finance.yahoo.com",
+}
+
+
+def _yahoo_ticker(ticker: str) -> str:
+    """Convert ticker to Yahoo Finance format (BRK/B → BRK-B)."""
+    return ticker.replace("/", "-")
+
+
+def _fetch_historical_price(ticker: str, date_str: str) -> float | None:
+    """Fetch the closing price of a ticker on a specific date from Yahoo Finance."""
+    try:
+        yt = _yahoo_ticker(ticker)
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        # period1 = start of that day, period2 = next day (to get the close)
+        p1 = int(dt.timestamp())
+        p2 = p1 + 86400 * 3  # add 3 days buffer for weekends/holidays
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yt}?period1={p1}&period2={p2}&interval=1d"
+        resp = fetch_with_retry(url, headers=YAHOO_HEADERS, timeout=10)
+        if resp.status_code != 200:
+            return None
+        result = resp.json().get("chart", {}).get("result", [])
+        if not result:
+            return None
+        closes = [c for c in result[0]["indicators"]["quote"][0].get("close", []) if c is not None]
+        return round(closes[0], 2) if closes else None
+    except Exception as e:
+        print(f"  [!] Historical price fetch failed for {ticker} on {date_str}: {e}")
+        return None
+
+
+def _fetch_current_price(ticker: str) -> float | None:
+    """Fetch the current price of a ticker from Yahoo Finance."""
+    try:
+        yt = _yahoo_ticker(ticker)
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yt}?range=1d&interval=1d"
+        resp = fetch_with_retry(url, headers=YAHOO_HEADERS, timeout=10)
+        if resp.status_code != 200:
+            return None
+        result = resp.json().get("chart", {}).get("result", [])
+        if not result:
+            return None
+        closes = [c for c in result[0]["indicators"]["quote"][0].get("close", []) if c is not None]
+        return round(closes[-1], 2) if closes else None
+    except Exception:
+        return None
+
+
+def enrich_congress_trades() -> dict:
+    """
+    Scrape trades, store BUYs in DB, fetch prices, calculate returns.
+    Returns summary stats.
+    """
+    import time as _time
+    from database import (
+        upsert_congress_trade, get_congress_trades_needing_prices,
+        get_congress_tickers, update_congress_trade_entry_price,
+        update_congress_current_prices,
+    )
+
+    print("[Congress Enrich] Fetching trades from Capitol Trades...")
+    trades = fetch_congressional_trades(page_size=200, asset_type="stock")
+
+    # Store BUY trades
+    stored = 0
+    for trade in trades:
+        if trade.get("action") != "BUY":
+            continue
+        if not trade.get("ticker") or not trade.get("tx_date"):
+            continue
+        if upsert_congress_trade(trade):
+            stored += 1
+
+    print(f"[Congress Enrich] {stored} new BUY trades stored from {len(trades)} total.")
+
+    # Fetch historical prices for trades missing them
+    needs_price = get_congress_trades_needing_prices()
+    print(f"[Congress Enrich] {len(needs_price)} trades need historical prices.")
+    priced = 0
+    for t in needs_price:
+        price = _fetch_historical_price(t["ticker"], t["tx_date"])
+        if price:
+            update_congress_trade_entry_price(t["id"], price)
+            priced += 1
+        _time.sleep(0.3)  # Rate limit Yahoo
+
+    print(f"[Congress Enrich] Fetched {priced}/{len(needs_price)} historical prices.")
+
+    # Update current prices for all tickers
+    tickers = get_congress_tickers()
+    print(f"[Congress Enrich] Updating current prices for {len(tickers)} tickers...")
+    updated = 0
+    for ticker in tickers:
+        price = _fetch_current_price(ticker)
+        if price:
+            update_congress_current_prices(ticker, price)
+            updated += 1
+        _time.sleep(0.3)
+
+    print(f"[Congress Enrich] Updated {updated}/{len(tickers)} current prices.")
+
+    return {"stored": stored, "priced": priced, "updated": updated}
+
+
 def summarize_congressional_activity(trades: list[dict]) -> dict:
     """Summarize congressional trades into a signal (same pattern as insider activity)."""
     if not trades:

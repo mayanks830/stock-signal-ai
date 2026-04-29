@@ -63,13 +63,22 @@ ANALYSIS RULES:
 - MEDIUM confidence: good setup but missing one key confirming factor
 - Do NOT include LOW confidence
 
-For each BUY:
+For each BUY, provide a structured 10-point analysis:
 - ticker, name, sector, confidence (HIGH or MEDIUM only)
-- reason: 2-3 sentences, reference specific news catalyst and data
-- risk: main downside
+- wow_change_pct, current_price (copy from data)
 - price_target: +10-20% realistic target
 - stop_loss: -5 to -8% below current price
-- wow_change_pct, current_price (copy from data)
+- analysis object with these fields:
+  - business_model: 1 sentence describing what the company does
+  - financial_health: 1 sentence on revenue/earnings quality (reference specific numbers from news if available)
+  - competitive_position: 1 sentence on moat or market position
+  - catalyst: the specific news event or data point driving this signal
+  - headwinds: key risk factor or headwind to watch
+  - valuation: 1 sentence on whether stock looks cheap/fair/expensive vs peers or historical
+  - technical_summary: 1 sentence summarizing the technical setup (trends, volume, relative strength)
+  - bull_case: 2 sentences — best-case scenario from here
+  - bear_case: 2 sentences — worst-case scenario from here
+  - recommendation: 1 sentence — clear action statement with entry, target, stop
 
 Respond ONLY with valid JSON array:
 [
@@ -78,12 +87,22 @@ Respond ONLY with valid JSON array:
     "name": "Morgan Stanley",
     "sector": "Financials",
     "confidence": "HIGH",
-    "reason": "Beat Q1 earnings with trading revenue $1B above estimates. Volume at 2.1x avg confirms institutional buying. All 3 trend arrows up with +6% outperformance vs SPY.",
-    "risk": "Trading revenue volatility may not sustain.",
+    "wow_change_pct": 9.06,
+    "current_price": 191.96,
     "price_target": 210.00,
     "stop_loss": 177.00,
-    "wow_change_pct": 9.06,
-    "current_price": 191.96
+    "analysis": {{
+      "business_model": "Global investment bank with leading positions in institutional securities, wealth management, and investment management.",
+      "financial_health": "Q1 trading revenue beat estimates by $1B, indicating strong institutional activity and market share gains.",
+      "competitive_position": "Top-3 global investment bank with a dominant wealth management franchise (>$6T AUM).",
+      "catalyst": "Q1 earnings beat with trading revenue $1B above estimates, signaling broad-based strength.",
+      "headwinds": "Trading revenue is inherently volatile and may not sustain at elevated levels.",
+      "valuation": "Trading at 12x forward P/E, below 5-year average of 14x, suggesting upside re-rating potential.",
+      "technical_summary": "All 3 trend arrows up with 2.1x average volume and +6% relative strength vs SPY — strong momentum.",
+      "bull_case": "Sustained trading activity and wealth management inflows could drive earnings upgrades. Multiple expansion to historical average implies 15-20% upside.",
+      "bear_case": "A market downturn could compress trading volumes and AUM-based fees simultaneously. Regulatory changes in capital markets remain an overhang.",
+      "recommendation": "BUY at $191.96 with target $210.00 (+9.4%) and stop at $177.00 (-7.8%). Risk/reward favors longs."
+    }}
   }}
 ]
 
@@ -246,7 +265,7 @@ def analyze_stocks(stocks: list[dict], market_context: dict) -> list[dict]:
 
     message = client.messages.create(
         model="claude-opus-4-6",
-        max_tokens=4096,
+        max_tokens=8192,
         messages=[{"role": "user", "content": build_prompt(stocks, market_context)}],
     )
 
@@ -267,6 +286,11 @@ def analyze_stocks(stocks: list[dict], market_context: dict) -> list[dict]:
                         "earnings_within_7d", "earnings_date", "sentiment_score",
                         "trend_1d", "trend_1w", "trend_1m", "news"):
                 s[key] = orig.get(key)
+            # Build backward-compatible reason/risk from structured analysis
+            analysis = s.get("analysis", {})
+            if analysis:
+                s["reason"] = f"{analysis.get('catalyst', '')} {analysis.get('technical_summary', '')}".strip()
+                s["risk"] = analysis.get("headwinds", s.get("risk", ""))
         signals = apply_sector_cap(signals)
         print(f"Claude identified {len(signals)} buy signal(s).")
         return signals

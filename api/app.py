@@ -72,14 +72,21 @@ _STYLE = """
   .hero-title{font-size:2.4rem;font-weight:800;letter-spacing:-.03em;margin-bottom:.5rem;line-height:1.1}
   .hero-sub{color:#9ca3af;font-size:.95rem;margin-bottom:2rem;line-height:1.6;max-width:500px}
 
-  /* Features — horizontal row */
-  .features{display:grid;grid-template-columns:repeat(3,1fr);gap:.75rem;margin-bottom:2rem}
+  /* Primary feature — full width */
+  .feat-primary{background:#111827;border:1px solid rgba(59,130,246,.2);border-radius:12px;padding:1.25rem;margin-bottom:1rem;transition:border-color .2s}
+  .feat-primary:hover{border-color:rgba(59,130,246,.4)}
+  .feat-primary h4{font-size:.95rem;font-weight:700;margin-bottom:.6rem;color:#e5e7eb}
+  .feat-primary .checks{display:grid;grid-template-columns:1fr 1fr;gap:.35rem .75rem}
+  .feat-primary .chk{font-size:.72rem;color:#9ca3af;display:flex;align-items:center;gap:5px}
+  .feat-primary .chk .mark{color:#22c55e;font-weight:700}
+
+  /* Supporting features — 2 columns */
+  .feat-row{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:1.5rem}
   .feat{background:#111827;border:1px solid #1f2937;border-radius:10px;padding:1rem;transition:border-color .2s}
   .feat:hover{border-color:rgba(59,130,246,.3)}
   .feat-icon{width:32px;height:32px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:.95rem;margin-bottom:.6rem}
   .feat h4{font-size:.8rem;font-weight:600;margin-bottom:.25rem}
   .feat p{font-size:.68rem;color:#6b7280;line-height:1.45}
-  .feat-blue .feat-icon{background:rgba(59,130,246,.15)}
   .feat-purple .feat-icon{background:rgba(139,92,246,.15)}
   .feat-green .feat-icon{background:rgba(16,185,129,.15)}
 
@@ -113,60 +120,34 @@ _STYLE = """
 
 def _marketing_panel() -> str:
     return """<div class="right-mkt">
-  <div class="badge"><span class="dot"></span> Live &amp; Scanning Markets Daily</div>
-  <h2 class="hero-title">Trading Signals</h2>
-  <p class="hero-sub">Institutional-grade market intelligence powered by AI &mdash; built for investors who want an edge.</p>
+  <div class="badge"><span class="dot"></span> Powered by Claude AI &middot; Scanning Daily</div>
+  <h2 class="hero-title">AI Stock Signals You Can Trust</h2>
+  <p class="hero-sub">Every signal comes with a clear entry, target, stop loss, and the AI reasoning behind it &mdash; so you always know <em>why</em>.</p>
 
-  <div class="features">
-    <div class="feat feat-blue">
-      <div class="feat-icon">&#x1f916;</div>
-      <h4>AI-Powered Signals</h4>
-      <p>Claude AI scans S&amp;P 500 stocks daily &mdash; analyzing price action, volume, news catalysts, technicals, and insider activity to find high-conviction buy signals.</p>
+  <div class="feat-primary">
+    <h4>&#x1f916; Real Signals, Real Results</h4>
+    <div class="checks">
+      <span class="chk"><span class="mark">&#x2713;</span> Daily S&amp;P 500 scans with AI analysis</span>
+      <span class="chk"><span class="mark">&#x2713;</span> Entry, target &amp; stop on every signal</span>
+      <span class="chk"><span class="mark">&#x2713;</span> Transparent score breakdown per signal</span>
+      <span class="chk"><span class="mark">&#x2713;</span> Full P&amp;L tracking &amp; win/loss history</span>
     </div>
+  </div>
+
+  <div class="feat-row">
     <div class="feat feat-purple">
       <div class="feat-icon">&#x1f3db;</div>
-      <h4>Congress Tracking</h4>
-      <p>Real-time monitoring of congressional stock trades with $500k+ alerts. See what senators are buying and selling before the market reacts.</p>
+      <h4>Congress Trades</h4>
+      <p>Track congressional stock trades with alerts for $500k+ moves.</p>
     </div>
     <div class="feat feat-green">
-      <div class="feat-icon">&#x1f4ca;</div>
-      <h4>Full Transparency</h4>
-      <p>Every signal tracked with entry price, target, and stop loss. Real-time P&amp;L, win/loss outcomes, and complete historical performance.</p>
+      <div class="feat-icon">&#x1f50d;</div>
+      <h4>Stock Research</h4>
+      <p>On-demand AI analysis for any ticker with news &amp; technicals.</p>
     </div>
   </div>
 
-  <div class="founder">
-    <div class="avatar">MS</div>
-    <div class="founder-info">
-      <h4>Mayank Sethi</h4>
-      <div class="role">Founder &amp; CEO</div>
-      <div class="bio"><b>17+ yrs</b> in fintech. Former <b>PIMCO</b>, now <b>Group1001</b>. <b>$2T+</b> AUM managed.</div>
-    </div>
-    <a class="linkedin-link" href="https://www.linkedin.com/in/mayank-sethi-b8682613/" target="_blank" rel="noopener noreferrer">
-      <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.064 2.064 0 11-.001-4.128 2.064 2.064 0 01.001 4.128zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
-    </a>
-  </div>
-
-  <div class="certs">
-    <span class="cert">Oracle Cloud GenAI</span>
-    <span class="cert">SnowPro Advanced</span>
-    <span class="cert">AWS Database</span>
-    <span class="cert">AWS Solutions Architect</span>
-    <span class="cert">ITIL v3</span>
-  </div>
-
-  <div class="tech">
-    <span class="pill pill-ai">Claude AI</span>
-    <span class="pill pill-be">Python</span>
-    <span class="pill pill-be">FastAPI</span>
-    <span class="pill pill-fe">React</span>
-    <span class="pill pill-fe">TypeScript</span>
-    <span class="pill pill-data">Yahoo Finance</span>
-    <span class="pill pill-data">Capitol Trades</span>
-    <span class="pill pill-infra">Railway</span>
-  </div>
-
-  <p class="disclaimer">This tool is for informational purposes only. Not financial advice. Always do your own research before making investment decisions.<br>&copy; 2026 Trading Signals. All rights reserved.</p>
+  <p class="disclaimer">This tool is for informational purposes only. Not financial advice. Always do your own research.<br>&copy; 2026 Trading Signals. All rights reserved.</p>
 </div>"""
 
 

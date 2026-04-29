@@ -2,7 +2,7 @@ import json
 import time
 from fastapi import APIRouter, HTTPException, Query
 
-from fetcher import _fetch_price_data_no_filter, fetch_news
+from fetcher import _fetch_price_data_no_filter, fetch_news, SECTOR_MAP
 from sentiment import label_headlines
 from technicals import get_technicals
 from social import get_social_data
@@ -10,6 +10,77 @@ from market_context import build_market_context, format_for_prompt
 from analyzer import client
 
 router = APIRouter()
+
+# ── Ticker ↔ Company Name mapping ────────────────────────────────────────────
+TICKER_TO_NAME: dict[str, str] = {
+    "AAPL": "Apple", "MSFT": "Microsoft", "NVDA": "NVIDIA", "AVGO": "Broadcom",
+    "AMD": "AMD", "ADBE": "Adobe", "INTU": "Intuit", "QCOM": "Qualcomm",
+    "AMAT": "Applied Materials", "LRCX": "Lam Research", "KLAC": "KLA Corp",
+    "PANW": "Palo Alto Networks", "SNPS": "Synopsys", "CDNS": "Cadence",
+    "MSI": "Motorola Solutions", "APH": "Amphenol", "FICO": "Fair Isaac",
+    "ROP": "Roper Technologies", "MCHP": "Microchip Technology", "ACN": "Accenture",
+    "CRM": "Salesforce", "TXN": "Texas Instruments", "ADI": "Analog Devices",
+    "IBM": "IBM", "AMZN": "Amazon", "TSLA": "Tesla", "HD": "Home Depot",
+    "MCD": "McDonald's", "LOW": "Lowe's", "TGT": "Target",
+    "BKNG": "Booking Holdings", "ORLY": "O'Reilly Auto", "AZO": "AutoZone",
+    "DHI": "D.R. Horton", "LEN": "Lennar", "F": "Ford", "GM": "General Motors",
+    "DIS": "Disney", "UBER": "Uber", "GOOGL": "Alphabet/Google",
+    "META": "Meta/Facebook", "NFLX": "Netflix", "CSCO": "Cisco",
+    "JPM": "JPMorgan Chase", "BAC": "Bank of America", "GS": "Goldman Sachs",
+    "MS": "Morgan Stanley", "WFC": "Wells Fargo", "C": "Citigroup",
+    "BK": "Bank of New York Mellon", "SCHW": "Charles Schwab", "AXP": "American Express",
+    "COF": "Capital One", "USB": "U.S. Bancorp", "PNC": "PNC Financial",
+    "TFC": "Truist Financial", "MCO": "Moody's", "SPGI": "S&P Global",
+    "CB": "Chubb", "MMC": "Marsh McLennan", "CME": "CME Group",
+    "V": "Visa", "MA": "Mastercard",
+    "UNH": "UnitedHealth", "JNJ": "Johnson & Johnson", "LLY": "Eli Lilly",
+    "MRK": "Merck", "ABBV": "AbbVie", "TMO": "Thermo Fisher", "ABT": "Abbott",
+    "DHR": "Danaher", "ISRG": "Intuitive Surgical", "SYK": "Stryker",
+    "GILD": "Gilead Sciences", "ELV": "Elevance Health", "VRTX": "Vertex Pharma",
+    "REGN": "Regeneron", "BDX": "Becton Dickinson", "BSX": "Boston Scientific",
+    "EW": "Edwards Lifesciences", "ZTS": "Zoetis", "HCA": "HCA Healthcare",
+    "CI": "Cigna", "AMGN": "Amgen",
+    "XOM": "ExxonMobil", "CVX": "Chevron", "COP": "ConocoPhillips",
+    "EOG": "EOG Resources", "SLB": "Schlumberger", "OXY": "Occidental Petroleum",
+    "PSX": "Phillips 66", "VLO": "Valero Energy", "MPC": "Marathon Petroleum",
+    "HAL": "Halliburton",
+    "PG": "Procter & Gamble", "KO": "Coca-Cola", "PEP": "PepsiCo",
+    "WMT": "Walmart", "COST": "Costco", "MDLZ": "Mondelez",
+    "CL": "Colgate-Palmolive", "MO": "Altria", "PM": "Philip Morris",
+    "LIN": "Linde", "NUE": "Nucor", "FCX": "Freeport-McMoRan",
+    "CAT": "Caterpillar", "GE": "GE Aerospace", "HON": "Honeywell",
+    "RTX": "RTX/Raytheon", "NOC": "Northrop Grumman", "GD": "General Dynamics",
+    "MMM": "3M", "EMR": "Emerson Electric", "ETN": "Eaton",
+    "PH": "Parker Hannifin", "ITW": "Illinois Tool Works", "WM": "Waste Management",
+    "PAYX": "Paychex", "CTAS": "Cintas", "ODFL": "Old Dominion Freight",
+    "DE": "John Deere", "FAST": "Fastenal",
+    "NEE": "NextEra Energy", "SO": "Southern Company", "DUK": "Duke Energy",
+    "PLD": "Prologis", "WELL": "Welltower", "SPG": "Simon Property",
+    "AMT": "American Tower",
+}
+
+
+@router.get("/search/autocomplete")
+def autocomplete(query: str = Query(..., min_length=1, max_length=50)):
+    """Return matching tickers for a search query (by ticker or company name)."""
+    q = query.strip().lower()
+    results = []
+
+    for ticker, name in TICKER_TO_NAME.items():
+        ticker_lower = ticker.lower()
+        name_lower = name.lower()
+
+        # Exact ticker match = highest priority
+        if ticker_lower == q:
+            results.insert(0, {"ticker": ticker, "name": name, "sector": SECTOR_MAP.get(ticker, "Other")})
+        # Ticker starts with query
+        elif ticker_lower.startswith(q):
+            results.append({"ticker": ticker, "name": name, "sector": SECTOR_MAP.get(ticker, "Other")})
+        # Name contains query
+        elif q in name_lower:
+            results.append({"ticker": ticker, "name": name, "sector": SECTOR_MAP.get(ticker, "Other")})
+
+    return results[:10]
 
 # ── In-memory caches ─────────────────────────────────────────────────────────
 _search_cache: dict[str, tuple[float, dict]] = {}  # ticker → (timestamp, result)
@@ -27,6 +98,24 @@ def _get_cached_market_ctx() -> dict:
     ctx = build_market_context()
     _market_ctx_cache = (now, ctx)
     return ctx
+
+
+def _resolve_ticker(query: str) -> str | None:
+    """Resolve a company name or ticker input to a valid ticker symbol."""
+    q = query.upper().strip()
+    # Already a known ticker
+    if q in TICKER_TO_NAME:
+        return q
+
+    # Try matching by company name (case-insensitive)
+    q_lower = query.lower().strip()
+    best = None
+    for ticker, name in TICKER_TO_NAME.items():
+        if name.lower() == q_lower:
+            return ticker  # Exact name match
+        if q_lower in name.lower() and best is None:
+            best = ticker  # First partial match
+    return best
 
 
 def _evict_stale():
@@ -109,14 +198,23 @@ DATA:
 {news_lines}
 {social_lines}
 
-Provide your analysis as a JSON object with these fields:
+Provide a structured 10-point analysis as a JSON object with these fields:
 - outlook: "BULLISH", "BEARISH", or "NEUTRAL"
 - signal: "BUY", "SELL", or "HOLD"
-- reasoning: 3-5 sentences explaining your analysis, referencing specific data points
 - price_target: realistic price target (number or null if HOLD)
 - stop_loss: stop loss level (number or null if HOLD)
-- risk: main risk factor in 1-2 sentences
 - key_levels: object with "support" and "resistance" price levels (numbers)
+- analysis: object with these fields:
+  - business_model: 1-2 sentences describing what the company does and its revenue model
+  - financial_health: 1-2 sentences on recent earnings, revenue trends, margins, or balance sheet
+  - competitive_position: 1-2 sentences on moat, market share, or competitive advantages
+  - catalyst: the specific news event or data point driving the current setup (or "No specific catalyst" if none)
+  - headwinds: key risk factors or headwinds (1-2 sentences)
+  - valuation: 1-2 sentences on whether stock looks cheap/fair/expensive vs peers or historical averages
+  - technical_summary: 1-2 sentences summarizing the technical picture (RSI, MAs, MACD, trends, volume)
+  - bull_case: 2-3 sentences — best case scenario
+  - bear_case: 2-3 sentences — worst case scenario
+  - recommendation: 2-3 sentences — clear actionable summary with price levels
 
 Respond ONLY with valid JSON (no markdown, no code blocks):
 """
@@ -124,11 +222,18 @@ Respond ONLY with valid JSON (no markdown, no code blocks):
 
 @router.get("/search")
 def search_stock(
-    ticker: str = Query(..., min_length=1, max_length=10),
+    ticker: str = Query(..., min_length=1, max_length=50),
     nocache: bool = Query(False),
 ):
-    """Run full analysis for a single ticker."""
-    ticker = ticker.upper().strip()
+    """Run full analysis for a single ticker or company name."""
+    ticker = ticker.strip()[:50]
+
+    # Try to resolve company name → ticker if input doesn't look like a ticker
+    resolved = _resolve_ticker(ticker)
+    if resolved:
+        ticker = resolved
+    else:
+        ticker = ticker.upper()
 
     # Evict stale cache entries
     _evict_stale()
@@ -158,7 +263,7 @@ def search_stock(
     try:
         message = client.messages.create(
             model="claude-opus-4-6",
-            max_tokens=2048,
+            max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
         raw = message.content[0].text.strip()
@@ -204,7 +309,7 @@ _RANGE_INTERVALS = {
 
 @router.get("/price-history")
 def get_price_history(
-    ticker: str = Query(..., min_length=1, max_length=10),
+    ticker: str = Query(..., min_length=1, max_length=50),
     range: str = Query("1mo"),
 ):
     """Fetch price history for a ticker at a given range (1mo, 3mo, 6mo, 1y, 2y, 5y)."""

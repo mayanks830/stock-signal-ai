@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { LineChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from 'recharts'
 
 interface PriceData {
@@ -47,14 +47,28 @@ interface Social {
   cong_trades: { filer: string; party: string; action: string; tx_date: string }[]
 }
 
+interface StructuredAnalysis {
+  business_model?: string
+  financial_health?: string
+  competitive_position?: string
+  catalyst?: string
+  headwinds?: string
+  valuation?: string
+  technical_summary?: string
+  bull_case?: string
+  bear_case?: string
+  recommendation?: string
+}
+
 interface AiAnalysis {
   outlook: string
   signal: string
-  reasoning: string
+  reasoning?: string
   price_target?: number | null
   stop_loss?: number | null
   risk?: string
   key_levels?: { support: number; resistance: number }
+  analysis?: StructuredAnalysis
 }
 
 interface SearchResult {
@@ -97,17 +111,67 @@ function getTickerFromHash(): string {
   return ''
 }
 
+interface Suggestion {
+  ticker: string
+  name: string
+  sector: string
+}
+
 export default function StockSearch() {
   const [ticker, setTicker] = useState(getTickerFromHash)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<SearchResult | null>(null)
   const [error, setError] = useState('')
   const didAutoSearch = useRef(false)
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([])
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const [selectedIdx, setSelectedIdx] = useState(-1)
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const wrapperRef = useRef<HTMLDivElement>(null)
+
+  // Close suggestions on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const fetchSuggestions = useCallback((query: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    if (query.length < 1) { setSuggestions([]); setShowSuggestions(false); return }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const resp = await fetch(`/api/search/autocomplete?query=${encodeURIComponent(query)}`)
+        if (resp.ok) {
+          const data = await resp.json()
+          setSuggestions(data)
+          setShowSuggestions(data.length > 0)
+          setSelectedIdx(-1)
+        }
+      } catch { /* ignore */ }
+    }, 200)
+  }, [])
+
+  const handleInputChange = (val: string) => {
+    setTicker(val.toUpperCase())
+    fetchSuggestions(val)
+  }
+
+  const selectSuggestion = (s: Suggestion) => {
+    setTicker(s.ticker)
+    setShowSuggestions(false)
+    analyze(s.ticker)
+  }
 
   const analyze = async (t?: string) => {
     const symbol = (t || ticker).trim().toUpperCase()
     if (!symbol) return
     setTicker(symbol)
+    setShowSuggestions(false)
     setLoading(true)
     setError('')
     setResult(null)
@@ -126,6 +190,26 @@ export default function StockSearch() {
     }
   }
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!showSuggestions || suggestions.length === 0) {
+      if (e.key === 'Enter') analyze()
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setSelectedIdx(i => Math.min(i + 1, suggestions.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setSelectedIdx(i => Math.max(i - 1, 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (selectedIdx >= 0) selectSuggestion(suggestions[selectedIdx])
+      else analyze()
+    } else if (e.key === 'Escape') {
+      setShowSuggestions(false)
+    }
+  }
+
   // Auto-search if ticker was in the URL hash on mount
   useEffect(() => {
     if (didAutoSearch.current) return
@@ -139,14 +223,36 @@ export default function StockSearch() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
-        <input
-          type="text"
-          value={ticker}
-          onChange={e => setTicker(e.target.value.toUpperCase())}
-          onKeyDown={e => e.key === 'Enter' && analyze()}
-          placeholder="Enter ticker (e.g. AAPL)"
-          className="w-full sm:flex-1 sm:max-w-xs bg-surface-secondary border border-border-subtle rounded-lg px-4 py-2.5 text-content-primary placeholder-content-faint focus:outline-none focus:border-blue-500 text-sm"
-        />
+        <div className="relative w-full sm:flex-1 sm:max-w-xs" ref={wrapperRef}>
+          <input
+            type="text"
+            value={ticker}
+            onChange={e => handleInputChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+            placeholder="Ticker or company name (e.g. AAPL, Apple)"
+            className="w-full bg-surface-secondary border border-border-subtle rounded-lg px-4 py-2.5 text-content-primary placeholder-content-faint focus:outline-none focus:border-blue-500 text-sm"
+          />
+          {showSuggestions && suggestions.length > 0 && (
+            <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-surface-secondary border border-border-subtle rounded-lg shadow-xl overflow-hidden">
+              {suggestions.map((s, i) => (
+                <button
+                  key={s.ticker}
+                  onClick={() => selectSuggestion(s)}
+                  className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between transition ${
+                    i === selectedIdx ? 'bg-blue-600/20 text-content-primary' : 'text-content-secondary hover:bg-surface-hover'
+                  }`}
+                >
+                  <span>
+                    <span className="font-semibold text-content-primary">{s.ticker}</span>
+                    <span className="text-content-muted ml-2">{s.name}</span>
+                  </span>
+                  <span className="text-xs text-content-faint">{s.sector}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button
           onClick={() => analyze()}
           disabled={loading || !ticker.trim()}
@@ -398,10 +504,64 @@ function ResultDisplay({ result }: { result: SearchResult }) {
         </Section>
       </div>
 
-      {/* AI Analysis */}
-      <div className="border border-border bg-surface-secondary rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-content-muted uppercase tracking-wide mb-3">AI Analysis</h3>
-        <p className="text-content-secondary text-sm leading-relaxed mb-4">{ai.reasoning}</p>
+      {/* AI Analysis — Structured Framework */}
+      <div className="border border-border bg-surface-secondary rounded-xl p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-content-muted uppercase tracking-wide">AI Analysis</h3>
+
+        {ai.analysis ? (
+          <>
+            {/* Company Profile */}
+            <div className="space-y-2 text-sm">
+              {ai.analysis.business_model && (
+                <AnalysisField label="Business Model" value={ai.analysis.business_model} />
+              )}
+              {ai.analysis.financial_health && (
+                <AnalysisField label="Financial Health" value={ai.analysis.financial_health} />
+              )}
+              {ai.analysis.competitive_position && (
+                <AnalysisField label="Competitive Position" value={ai.analysis.competitive_position} />
+              )}
+              {ai.analysis.valuation && (
+                <AnalysisField label="Valuation" value={ai.analysis.valuation} />
+              )}
+              {ai.analysis.catalyst && (
+                <AnalysisField label="Catalyst" value={ai.analysis.catalyst} color="text-blue-400" />
+              )}
+              {ai.analysis.technical_summary && (
+                <AnalysisField label="Technical Setup" value={ai.analysis.technical_summary} />
+              )}
+            </div>
+
+            {/* Bull / Bear Cases */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {ai.analysis.bull_case && (
+                <div className="bg-green-500/8 border border-green-500/15 rounded-lg p-3">
+                  <div className="text-xs font-semibold text-green-400 mb-1">Bull Case</div>
+                  <p className="text-sm text-content-secondary leading-relaxed">{ai.analysis.bull_case}</p>
+                </div>
+              )}
+              {ai.analysis.bear_case && (
+                <div className="bg-red-500/8 border border-red-500/15 rounded-lg p-3">
+                  <div className="text-xs font-semibold text-red-400 mb-1">Bear Case</div>
+                  <p className="text-sm text-content-secondary leading-relaxed">{ai.analysis.bear_case}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Recommendation */}
+            {ai.analysis.recommendation && (
+              <div className="bg-blue-500/8 border border-blue-500/15 rounded-lg p-3">
+                <div className="text-xs font-semibold text-blue-400 mb-1">Recommendation</div>
+                <p className="text-sm text-content-secondary leading-relaxed">{ai.analysis.recommendation}</p>
+              </div>
+            )}
+          </>
+        ) : (
+          /* Fallback for old-format responses */
+          <p className="text-content-secondary text-sm leading-relaxed">{ai.reasoning}</p>
+        )}
+
+        {/* Price levels */}
         <div className="flex flex-wrap gap-4 text-sm">
           {ai.price_target != null && (
             <span className="text-content-muted">Target: <span className="text-green-400 font-medium">${ai.price_target}</span></span>
@@ -416,8 +576,10 @@ function ResultDisplay({ result }: { result: SearchResult }) {
             </>
           )}
         </div>
-        {ai.risk && (
-          <p className="text-xs text-content-faint mt-3">Risk: {ai.risk}</p>
+
+        {/* Headwinds fallback for old format */}
+        {!ai.analysis && ai.risk && (
+          <p className="text-xs text-content-faint">Risk: {ai.risk}</p>
         )}
       </div>
     </div>
@@ -438,6 +600,15 @@ function Row({ label, value, color = 'text-content-secondary' }: { label: string
     <div className="flex justify-between text-sm py-1">
       <span className="text-content-faint">{label}</span>
       <span className={color}>{value}</span>
+    </div>
+  )
+}
+
+function AnalysisField({ label, value, color = 'text-content-faint' }: { label: string; value: string; color?: string }) {
+  return (
+    <div className="flex gap-3">
+      <span className={`${color} font-medium w-36 shrink-0 text-xs pt-0.5`}>{label}</span>
+      <span className="text-content-secondary leading-relaxed">{value}</span>
     </div>
   )
 }
