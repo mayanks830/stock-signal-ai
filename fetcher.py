@@ -357,8 +357,10 @@ def fetch_alt_news(ticker: str) -> list[dict]:
         items = []
         for hit in hits[:3]:
             src = hit.get("_source", {})
-            form_type = src.get("forms", [""])[0] if src.get("forms") else ""
-            title = f"[SEC {form_type}] {src.get('entity_name', ticker)}: {src.get('file_description', 'Filing')}"
+            form_type = src.get("form") or src.get("file_type") or ""
+            entity = src.get("display_names", [""])[0].split("(")[0].strip() if src.get("display_names") else ticker
+            desc = src.get("file_description", "Filing")
+            title = f"[SEC {form_type}] {entity}: {desc}"
             filed = src.get("file_date", "recent")
             items.append({"title": title, "link": "", "date": filed})
         return items
@@ -384,7 +386,7 @@ def fetch_early_candidates(tickers: list[str], spy_wow: float | None,
         wow = price_data["wow_change_pct"]
         vol = price_data["volume_ratio"]
         # Hasn't moved much but volume is elevated
-        if -1.0 <= wow <= 1.5 and vol >= 1.3:
+        if -1.0 <= wow <= 1.5 and vol >= 1.1:
             candidates.append(_build_candidate(ticker, price_data, spy_wow, earnings_map))
         time.sleep(0.3)
 
@@ -419,8 +421,8 @@ def fetch_dip_candidates(tickers: list[str], spy_wow: float | None,
         wow = price_data["wow_change_pct"]
         range_pos = price_data["range_position"]
         vol = price_data["volume_ratio"]
-        # Meaningful drop, near bottom of range, on volume
-        if wow <= -3.0 and range_pos <= 30 and vol >= 1.2:
+        # Meaningful drop, near bottom of range
+        if wow <= -2.0 and range_pos <= 40:
             candidates.append(_build_candidate(ticker, price_data, spy_wow, earnings_map))
         time.sleep(0.3)
 
@@ -452,8 +454,8 @@ def fetch_pullback_candidates(tickers: list[str], spy_wow: float | None,
         wow = price_data["wow_change_pct"]
         range_pos = price_data["range_position"]
         trend_1m = price_data["trend_1m"]
-        # Uptrend (1m) but pulling back this week, mid-range position
-        if trend_1m == "up" and -5.0 <= wow <= -1.0 and 30 <= range_pos <= 60:
+        # Uptrend (1m) but pulling back this week
+        if trend_1m == "up" and -5.0 <= wow <= -1.0 and 20 <= range_pos <= 70:
             candidates.append(_build_candidate(ticker, price_data, spy_wow, earnings_map))
         time.sleep(0.3)
 
@@ -484,7 +486,7 @@ def fetch_congress_frontrun_candidates(spy_wow: float | None,
                 SELECT DISTINCT ticker, filer, party, tx_date, value_numeric
                 FROM congress_trades
                 WHERE action = 'BUY' AND tx_date >= ?
-                  AND (value_numeric IS NULL OR value_numeric >= 100000)
+                  AND (value_numeric IS NULL OR value_numeric >= 5000)
                 ORDER BY tx_date DESC
             """, (cutoff,)).fetchall()
         trades = [dict(r) for r in rows]
