@@ -1,11 +1,20 @@
 from fastapi import APIRouter, BackgroundTasks
-from fetcher import get_sp500_tickers, fetch_candidates, fetch_watchlist_data
-from analyzer import analyze_stocks, analyze_watchlist
+from fetcher import (
+    get_sp500_tickers, fetch_candidates, fetch_watchlist_data,
+    fetch_early_candidates, fetch_dip_candidates, fetch_pullback_candidates,
+    fetch_congress_frontrun_candidates, get_spy_wow,
+)
+from analyzer import (
+    analyze_stocks, analyze_watchlist,
+    analyze_early_signals, analyze_dip_signals, analyze_pullback_signals,
+    analyze_congress_signals,
+)
 from notifier import send_signals, send_watchlist_report
 from history import record_signals
 from market_context import build_market_context
 from database import get_all_signals, get_watchlist
 from report import generate_watchlist_pdf
+from earnings import get_earnings_dates
 
 router = APIRouter()
 _scan_running = False
@@ -23,25 +32,63 @@ def _do_scan():
 
         _scan_status["step"] = "Building market context..."
         market_context = build_market_context()
+        spy_wow = get_spy_wow()
+        earnings_map = get_earnings_dates(tickers)
 
-        _scan_status["step"] = f"Fetching price data for {len(tickers)} stocks..."
+        all_signals = []
+
+        # Pipeline 1: Momentum
+        _scan_status["step"] = "Pipeline 1/5: Momentum signals..."
         candidates = fetch_candidates(tickers)
-        if not candidates:
-            _scan_status["step"] = "No candidates found. Scan complete."
-            return
+        if candidates:
+            signals = analyze_stocks(candidates, market_context)
+            all_signals.extend(signals)
 
-        _scan_status["step"] = f"Running AI analysis on {len(candidates)} candidates..."
-        signals = analyze_stocks(candidates, market_context)
+        # Pipeline 2: Early signals
+        _scan_status["step"] = "Pipeline 2/5: Early signals..."
+        try:
+            early = fetch_early_candidates(tickers, spy_wow, earnings_map)
+            if early:
+                all_signals.extend(analyze_early_signals(early, market_context))
+        except Exception as e:
+            print(f"[!] Early pipeline: {e}", flush=True)
+
+        # Pipeline 3: Buy-the-dip
+        _scan_status["step"] = "Pipeline 3/5: Dip signals..."
+        try:
+            dips = fetch_dip_candidates(tickers, spy_wow, earnings_map)
+            if dips:
+                all_signals.extend(analyze_dip_signals(dips, market_context))
+        except Exception as e:
+            print(f"[!] Dip pipeline: {e}", flush=True)
+
+        # Pipeline 4: Pullback
+        _scan_status["step"] = "Pipeline 4/5: Pullback signals..."
+        try:
+            pullbacks = fetch_pullback_candidates(tickers, spy_wow, earnings_map)
+            if pullbacks:
+                all_signals.extend(analyze_pullback_signals(pullbacks, market_context))
+        except Exception as e:
+            print(f"[!] Pullback pipeline: {e}", flush=True)
+
+        # Pipeline 5: Congress
+        _scan_status["step"] = "Pipeline 5/5: Congress signals..."
+        try:
+            congress = fetch_congress_frontrun_candidates(spy_wow, earnings_map)
+            if congress:
+                all_signals.extend(analyze_congress_signals(congress, market_context))
+        except Exception as e:
+            print(f"[!] Congress pipeline: {e}", flush=True)
 
         _scan_status["step"] = "Sending signals to Discord..."
-        send_signals(signals, market_context)
+        send_signals(all_signals, market_context)
 
-        if signals:
-            record_signals(signals, market_context)
+        if all_signals:
+            record_signals(all_signals, market_context)
 
-        _scan_status["step"] = f"Done! {len(signals)} signal(s) generated."
-        _scan_status["signals_found"] = len(signals)
-        print(f"[Scan Complete] {len(signals)} signal(s) saved.", flush=True)
+        _scan_status["step"] = f"Done! {len(all_signals)} signal(s) from 5 pipelines."
+        _scan_status["signals_found"] = len(all_signals)
+        print(f"[Scan Complete] {len(all_signals)} signal(s) saved.", flush=True)
     except Exception as e:
         _scan_status["step"] = "Error"
         _scan_status["error"] = str(e)
