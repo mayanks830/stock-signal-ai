@@ -12,11 +12,7 @@ from fetcher import (
     fetch_early_candidates, fetch_dip_candidates, fetch_pullback_candidates,
     fetch_congress_frontrun_candidates, get_spy_wow,
 )
-from analyzer import (
-    analyze_stocks, analyze_watchlist,
-    analyze_early_signals, analyze_dip_signals, analyze_pullback_signals,
-    analyze_congress_signals,
-)
+from analyzer import run_full_analysis, analyze_watchlist
 from earnings import get_earnings_dates
 from notifier import send_signals, send_watchlist_report, send_congress_alert
 from history import record_signals
@@ -37,57 +33,64 @@ def run_scan():
     spy_wow = get_spy_wow()
     earnings_map = get_earnings_dates(tickers)
 
-    all_signals = []
+    # Collect ALL candidates from 5 pipelines
+    all_candidates = []
 
-    # Pipeline 1: Momentum (existing)
-    print("\n[Pipeline 1/5] Momentum signals...")
-    candidates = fetch_candidates(tickers)
-    if candidates:
-        signals = analyze_stocks(candidates, market_context)
-        all_signals.extend(signals)
+    print("\n[1/6] Fetching momentum candidates...")
+    try:
+        momentum = fetch_candidates(tickers)
+        for s in momentum:
+            s["signal_type"] = "MOMENTUM"
+        all_candidates.extend(momentum)
+        print(f"  {len(momentum)} momentum candidates")
+    except Exception as e:
+        print(f"  [!] Momentum fetch failed: {e}")
 
-    # Pipeline 2: Early signals (accumulation)
-    print("\n[Pipeline 2/5] Early signals...")
+    print("\n[2/6] Fetching early signal candidates...")
     try:
         early = fetch_early_candidates(tickers, spy_wow, earnings_map)
-        if early:
-            signals = analyze_early_signals(early, market_context)
-            all_signals.extend(signals)
+        for s in early:
+            s["signal_type"] = "EARLY"
+        all_candidates.extend(early)
+        print(f"  {len(early)} early candidates")
     except Exception as e:
-        print(f"  [!] Early signal pipeline failed: {e}")
+        print(f"  [!] Early signal fetch failed: {e}")
 
-    # Pipeline 3: Buy-the-dip
-    print("\n[Pipeline 3/5] Dip signals...")
+    print("\n[3/6] Fetching dip candidates...")
     try:
         dips = fetch_dip_candidates(tickers, spy_wow, earnings_map)
-        if dips:
-            signals = analyze_dip_signals(dips, market_context)
-            all_signals.extend(signals)
+        for s in dips:
+            s["signal_type"] = "DIP_BUY"
+        all_candidates.extend(dips)
+        print(f"  {len(dips)} dip candidates")
     except Exception as e:
-        print(f"  [!] Dip signal pipeline failed: {e}")
+        print(f"  [!] Dip fetch failed: {e}")
 
-    # Pipeline 4: Pullback entries
-    print("\n[Pipeline 4/5] Pullback signals...")
+    print("\n[4/6] Fetching pullback candidates...")
     try:
         pullbacks = fetch_pullback_candidates(tickers, spy_wow, earnings_map)
-        if pullbacks:
-            signals = analyze_pullback_signals(pullbacks, market_context)
-            all_signals.extend(signals)
+        for s in pullbacks:
+            s["signal_type"] = "PULLBACK"
+        all_candidates.extend(pullbacks)
+        print(f"  {len(pullbacks)} pullback candidates")
     except Exception as e:
-        print(f"  [!] Pullback signal pipeline failed: {e}")
+        print(f"  [!] Pullback fetch failed: {e}")
 
-    # Pipeline 5: Congress front-running
-    print("\n[Pipeline 5/5] Congress signals...")
+    print("\n[5/6] Fetching congress candidates...")
     try:
         congress = fetch_congress_frontrun_candidates(spy_wow, earnings_map)
-        if congress:
-            signals = analyze_congress_signals(congress, market_context)
-            all_signals.extend(signals)
+        for s in congress:
+            s["signal_type"] = "CONGRESS"
+        all_candidates.extend(congress)
+        print(f"  {len(congress)} congress candidates")
     except Exception as e:
-        print(f"  [!] Congress signal pipeline failed: {e}")
+        print(f"  [!] Congress fetch failed: {e}")
 
-    # Send and record all signals
-    print(f"\nTotal signals across all pipelines: {len(all_signals)}")
+    # 3-call AI pipeline: screen → analyze → risk frame
+    print(f"\n[6/6] AI pipeline: {len(all_candidates)} candidates → screen → analyze → risk...")
+    all_signals = run_full_analysis(all_candidates, market_context)
+
+    print(f"\nTotal signals: {len(all_signals)}")
     send_signals(all_signals, market_context)
 
     if all_signals:

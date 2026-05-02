@@ -190,7 +190,7 @@ def _build_single_stock_prompt(ticker: str, price_data: dict, technicals: dict |
 
     return f"""{market_block}
 
-You are a professional stock market analyst. Provide a comprehensive analysis for {ticker}.
+You are a senior quantitative analyst. Provide an honest, comprehensive analysis for {ticker}.
 
 DATA:
 {price_lines}
@@ -198,25 +198,44 @@ DATA:
 {news_lines}
 {social_lines}
 
-Provide a structured 10-point analysis as a JSON object with these fields:
-- outlook: "BULLISH", "BEARISH", or "NEUTRAL"
-- signal: "BUY", "SELL", or "HOLD"
-- price_target: realistic price target (number or null if HOLD)
-- stop_loss: stop loss level (number or null if HOLD)
-- key_levels: object with "support" and "resistance" price levels (numbers)
-- analysis: object with these fields:
-  - business_model: 1-2 sentences describing what the company does and its revenue model
-  - financial_health: 1-2 sentences on recent earnings, revenue trends, margins, or balance sheet
-  - competitive_position: 1-2 sentences on moat, market share, or competitive advantages
-  - catalyst: the specific news event or data point driving the current setup (or "No specific catalyst" if none)
-  - headwinds: key risk factors or headwinds (1-2 sentences)
-  - valuation: 1-2 sentences on whether stock looks cheap/fair/expensive vs peers or historical averages
-  - technical_summary: 1-2 sentences summarizing the technical picture (RSI, MAs, MACD, trends, volume)
-  - bull_case: 2-3 sentences — best case scenario
-  - bear_case: 2-3 sentences — worst case scenario
-  - recommendation: 2-3 sentences — clear actionable summary with price levels
+ANALYSIS RULES:
+1. Signal must be BUY, SELL, HOLD, or CONFLICTED
+   - Use CONFLICTED when technicals and sentiment/fundamentals disagree
+2. Confidence must be 1-10 (integer)
+   - 1-3: Speculative  |  4-6: Moderate  |  7-8: Strong  |  9-10: Very strong (cite 2+ sources)
+3. You MUST list data_gaps — what information you don't have
+4. Surface conflicts explicitly when data disagrees
 
 Respond ONLY with valid JSON (no markdown, no code blocks):
+{{
+  "signal": "BUY|SELL|HOLD|CONFLICTED",
+  "confidence": 7,
+  "price_target": 0.00,
+  "stop_loss": 0.00,
+  "key_levels": {{"support": 0.00, "resistance": 0.00}},
+  "technicals": {{
+    "summary": "1-2 sentence technical picture",
+    "indicators": ["RSI 65", "MACD bullish"]
+  }},
+  "sentiment": {{
+    "summary": "1-2 sentence sentiment read",
+    "sources": ["News", "Volume"]
+  }},
+  "conflicts": ["list any conflicts"],
+  "data_gaps": ["list what data is missing"],
+  "analysis": {{
+    "business_model": "1-2 sentences",
+    "financial_health": "1-2 sentences",
+    "competitive_position": "1-2 sentences",
+    "catalyst": "specific event or 'No specific catalyst'",
+    "headwinds": "1-2 sentences",
+    "valuation": "1-2 sentences",
+    "technical_summary": "1-2 sentences",
+    "bull_case": "2-3 sentences",
+    "bear_case": "2-3 sentences",
+    "recommendation": "2-3 sentences with price levels"
+  }}
+}}
 """
 
 

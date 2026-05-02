@@ -4,11 +4,7 @@ from fetcher import (
     fetch_early_candidates, fetch_dip_candidates, fetch_pullback_candidates,
     fetch_congress_frontrun_candidates, get_spy_wow,
 )
-from analyzer import (
-    analyze_stocks, analyze_watchlist,
-    analyze_early_signals, analyze_dip_signals, analyze_pullback_signals,
-    analyze_congress_signals,
-)
+from analyzer import run_full_analysis, analyze_watchlist
 from notifier import send_signals, send_watchlist_report
 from history import record_signals
 from market_context import build_market_context
@@ -35,50 +31,56 @@ def _do_scan():
         spy_wow = get_spy_wow()
         earnings_map = get_earnings_dates(tickers)
 
-        all_signals = []
+        # Collect ALL candidates from all 5 pipelines
+        all_candidates = []
 
-        # Pipeline 1: Momentum
-        _scan_status["step"] = "Pipeline 1/5: Momentum signals..."
-        candidates = fetch_candidates(tickers)
-        if candidates:
-            signals = analyze_stocks(candidates, market_context)
-            all_signals.extend(signals)
+        _scan_status["step"] = "Collecting candidates: Momentum..."
+        try:
+            momentum = fetch_candidates(tickers)
+            for s in momentum:
+                s["signal_type"] = "MOMENTUM"
+            all_candidates.extend(momentum)
+        except Exception as e:
+            print(f"[!] Momentum fetch: {e}", flush=True)
 
-        # Pipeline 2: Early signals
-        _scan_status["step"] = "Pipeline 2/5: Early signals..."
+        _scan_status["step"] = "Collecting candidates: Early signals..."
         try:
             early = fetch_early_candidates(tickers, spy_wow, earnings_map)
-            if early:
-                all_signals.extend(analyze_early_signals(early, market_context))
+            for s in early:
+                s["signal_type"] = "EARLY"
+            all_candidates.extend(early)
         except Exception as e:
-            print(f"[!] Early pipeline: {e}", flush=True)
+            print(f"[!] Early fetch: {e}", flush=True)
 
-        # Pipeline 3: Buy-the-dip
-        _scan_status["step"] = "Pipeline 3/5: Dip signals..."
+        _scan_status["step"] = "Collecting candidates: Dip signals..."
         try:
             dips = fetch_dip_candidates(tickers, spy_wow, earnings_map)
-            if dips:
-                all_signals.extend(analyze_dip_signals(dips, market_context))
+            for s in dips:
+                s["signal_type"] = "DIP_BUY"
+            all_candidates.extend(dips)
         except Exception as e:
-            print(f"[!] Dip pipeline: {e}", flush=True)
+            print(f"[!] Dip fetch: {e}", flush=True)
 
-        # Pipeline 4: Pullback
-        _scan_status["step"] = "Pipeline 4/5: Pullback signals..."
+        _scan_status["step"] = "Collecting candidates: Pullback signals..."
         try:
             pullbacks = fetch_pullback_candidates(tickers, spy_wow, earnings_map)
-            if pullbacks:
-                all_signals.extend(analyze_pullback_signals(pullbacks, market_context))
+            for s in pullbacks:
+                s["signal_type"] = "PULLBACK"
+            all_candidates.extend(pullbacks)
         except Exception as e:
-            print(f"[!] Pullback pipeline: {e}", flush=True)
+            print(f"[!] Pullback fetch: {e}", flush=True)
 
-        # Pipeline 5: Congress
-        _scan_status["step"] = "Pipeline 5/5: Congress signals..."
+        _scan_status["step"] = "Collecting candidates: Congress signals..."
         try:
             congress = fetch_congress_frontrun_candidates(spy_wow, earnings_map)
-            if congress:
-                all_signals.extend(analyze_congress_signals(congress, market_context))
+            for s in congress:
+                s["signal_type"] = "CONGRESS"
+            all_candidates.extend(congress)
         except Exception as e:
-            print(f"[!] Congress pipeline: {e}", flush=True)
+            print(f"[!] Congress fetch: {e}", flush=True)
+
+        _scan_status["step"] = f"AI analysis: {len(all_candidates)} candidates → screen → analyze → risk..."
+        all_signals = run_full_analysis(all_candidates, market_context)
 
         _scan_status["step"] = "Sending signals to Discord..."
         send_signals(all_signals, market_context)
@@ -86,7 +88,7 @@ def _do_scan():
         if all_signals:
             record_signals(all_signals, market_context)
 
-        _scan_status["step"] = f"Done! {len(all_signals)} signal(s) from 5 pipelines."
+        _scan_status["step"] = f"Done! {len(all_signals)} signal(s) from {len(all_candidates)} candidates."
         _scan_status["signals_found"] = len(all_signals)
         print(f"[Scan Complete] {len(all_signals)} signal(s) saved.", flush=True)
     except Exception as e:

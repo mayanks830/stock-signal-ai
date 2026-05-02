@@ -2,14 +2,6 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AreaChart, Area, ReferenceLine, ResponsiveContainer, Tooltip } from 'recharts'
 
-const CONF_COLOR: Record<string, string> = {
-  HIGH: 'border-green-500 bg-green-500/10',
-  MEDIUM: 'border-yellow-500 bg-yellow-500/10',
-}
-const CONF_BADGE: Record<string, string> = {
-  HIGH: 'bg-green-500/20 text-green-400',
-  MEDIUM: 'bg-yellow-500/20 text-yellow-400',
-}
 const TREND_ARROW: Record<string, string> = { up: '\u2191', down: '\u2193' }
 
 const SIGNAL_TYPE_BADGE: Record<string, { label: string; color: string }> = {
@@ -20,72 +12,37 @@ const SIGNAL_TYPE_BADGE: Record<string, { label: string; color: string }> = {
   CONGRESS: { label: 'Congress', color: 'bg-yellow-500/20 text-yellow-400' },
 }
 
-// Score breakdown factor logic
-type FactorStatus = 'pass' | 'partial' | 'fail'
-interface Factor { label: string; status: FactorStatus; detail: string }
-
-function computeFactors(signal: any): Factor[] {
-  const factors: Factor[] = []
-
-  // News Catalyst
-  const news = signal.news || []
-  const posCount = news.filter((n: any) => n.sentiment === 'POSITIVE').length
-  const negCount = news.filter((n: any) => n.sentiment === 'NEGATIVE').length
-  if (news.length === 0) {
-    factors.push({ label: 'News Catalyst', status: 'fail', detail: 'No articles' })
-  } else if (posCount > negCount) {
-    factors.push({ label: 'News Catalyst', status: 'pass', detail: `${news.length} articles, ${posCount} positive` })
-  } else {
-    factors.push({ label: 'News Catalyst', status: 'partial', detail: `${news.length} articles, mixed` })
-  }
-
-  // Volume Surge
-  const vr = signal.volume_ratio
-  if (vr == null) {
-    factors.push({ label: 'Volume Surge', status: 'fail', detail: 'N/A' })
-  } else if (vr >= 1.5) {
-    factors.push({ label: 'Volume Surge', status: 'pass', detail: `${vr}x average` })
-  } else if (vr >= 1.0) {
-    factors.push({ label: 'Volume Surge', status: 'partial', detail: `${vr}x average` })
-  } else {
-    factors.push({ label: 'Volume Surge', status: 'fail', detail: `${vr}x average` })
-  }
-
-  // Trend Momentum
-  const trends = [signal.trend_1d, signal.trend_1w, signal.trend_1m]
-  const upCount = trends.filter(t => t === 'up').length
-  if (upCount === 3) {
-    factors.push({ label: 'Trend Momentum', status: 'pass', detail: '3/3 periods up' })
-  } else if (upCount === 2) {
-    factors.push({ label: 'Trend Momentum', status: 'partial', detail: '2/3 periods up' })
-  } else {
-    factors.push({ label: 'Trend Momentum', status: 'fail', detail: `${upCount}/3 periods up` })
-  }
-
-  // Relative Strength
-  const rs = signal.relative_strength_vs_spy
-  if (rs == null) {
-    factors.push({ label: 'Relative Strength', status: 'fail', detail: 'N/A' })
-  } else if (rs > 2) {
-    factors.push({ label: 'Relative Strength', status: 'pass', detail: `+${rs.toFixed(1)}% vs SPY` })
-  } else if (rs >= 0) {
-    factors.push({ label: 'Relative Strength', status: 'partial', detail: `+${rs.toFixed(1)}% vs SPY` })
-  } else {
-    factors.push({ label: 'Relative Strength', status: 'fail', detail: `${rs.toFixed(1)}% vs SPY` })
-  }
-
-  return factors
+// Signal action badge colors
+const SIGNAL_BADGE: Record<string, { label: string; color: string; border: string }> = {
+  BUY: { label: 'BUY', color: 'bg-green-500/20 text-green-400', border: 'border-green-500' },
+  SELL: { label: 'SELL', color: 'bg-red-500/20 text-red-400', border: 'border-red-500' },
+  HOLD: { label: 'HOLD', color: 'bg-gray-500/20 text-gray-400', border: 'border-gray-500' },
+  CONFLICTED: { label: 'CONFLICTED', color: 'bg-orange-500/20 text-orange-400', border: 'border-orange-500' },
 }
 
-const FACTOR_ICON: Record<FactorStatus, { icon: string; color: string }> = {
-  pass: { icon: '\u2713', color: 'text-green-400' },
-  partial: { icon: '~', color: 'text-yellow-400' },
-  fail: { icon: '\u2717', color: 'text-red-400' },
+function getConfidenceBg(conf: number): string {
+  if (conf >= 8) return 'bg-green-500/20 text-green-400'
+  if (conf >= 6) return 'bg-yellow-500/20 text-yellow-400'
+  if (conf >= 4) return 'bg-orange-500/20 text-orange-400'
+  return 'bg-red-500/20 text-red-400'
+}
+
+function getCardBorder(signal: string, conf: number): string {
+  if (signal === 'CONFLICTED') return 'border-orange-500 bg-orange-500/5'
+  if (signal === 'SELL') return 'border-red-500 bg-red-500/5'
+  if (conf >= 7) return 'border-green-500 bg-green-500/10'
+  if (conf >= 5) return 'border-yellow-500 bg-yellow-500/10'
+  return 'border-border-subtle bg-surface-secondary'
 }
 
 export default function SignalCard({ signal }: { signal: any }) {
   const [expanded, setExpanded] = useState(false)
-  const conf = (signal.confidence || 'MEDIUM').toUpperCase()
+
+  // Parse confidence: handle both "HIGH"/"MEDIUM" (legacy) and "1"-"10" (new)
+  const rawConf = signal.confidence || '5'
+  const confNum = rawConf === 'HIGH' ? 8 : rawConf === 'MEDIUM' ? 6 : parseInt(rawConf) || 5
+  const signalAction = signal.signal || 'BUY'
+  const signalBadge = SIGNAL_BADGE[signalAction] || SIGNAL_BADGE.HOLD
 
   const { data: priceData } = useQuery({
     queryKey: ['prices', signal.id],
@@ -97,7 +54,6 @@ export default function SignalCard({ signal }: { signal: any }) {
   const targetPrice = signal.price_target
   const stopPrice = signal.stop_loss
 
-  // Compute action box values
   const upsidePct = targetPrice && entryPrice
     ? ((targetPrice - entryPrice) / entryPrice * 100).toFixed(1)
     : null
@@ -108,29 +64,41 @@ export default function SignalCard({ signal }: { signal: any }) {
     ? Math.abs((targetPrice - entryPrice) / (entryPrice - stopPrice)).toFixed(1)
     : null
 
-  // Chart color: green if latest price >= entry, red otherwise
   const latestPrice = priceData?.prices?.length > 0
     ? priceData.prices[priceData.prices.length - 1].price
     : null
   const isWinning = latestPrice != null ? latestPrice >= entryPrice : true
   const chartColor = isWinning ? '#22c55e' : '#ef4444'
 
+  const analysis = signal.analysis || {}
+  const conflicts = analysis.conflicts || []
+  const dataGaps = analysis.data_gaps || []
+
   return (
     <div
-      className={`border rounded-xl p-4 cursor-pointer transition hover:border-opacity-80 ${CONF_COLOR[conf] || 'border-border-subtle bg-surface-secondary'}`}
+      className={`border rounded-xl p-4 cursor-pointer transition hover:border-opacity-80 ${getCardBorder(signalAction, confNum)}`}
       onClick={() => setExpanded(!expanded)}
     >
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-lg font-bold text-content-primary">{signal.ticker}</span>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${CONF_BADGE[conf]}`}>{conf}</span>
-            {signal.signal_type && signal.signal_type !== 'MOMENTUM' && (
+            {/* Signal action badge */}
+            <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${signalBadge.color}`}>
+              {signalBadge.label}
+            </span>
+            {/* Confidence */}
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getConfidenceBg(confNum)}`}>
+              {confNum}/10
+            </span>
+            {/* Signal type */}
+            {signal.signal_type && (
               <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${SIGNAL_TYPE_BADGE[signal.signal_type]?.color || 'bg-gray-500/20 text-gray-400'}`}>
                 {SIGNAL_TYPE_BADGE[signal.signal_type]?.label || signal.signal_type}
               </span>
             )}
+            {/* Outcome */}
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
               signal.outcome === 'WIN' ? 'bg-green-500/20 text-green-400' :
               signal.outcome === 'LOSS' ? 'bg-red-500/20 text-red-400' :
@@ -164,19 +132,37 @@ export default function SignalCard({ signal }: { signal: any }) {
         <span>1m <span className={signal.trend_1m === 'up' ? 'text-green-400' : 'text-red-400'}>{TREND_ARROW[signal.trend_1m] || '?'}</span></span>
       </div>
 
-      {/* Action Box — always visible */}
+      {/* Conflicts warning */}
+      {conflicts.length > 0 && (
+        <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-2.5 mb-3">
+          <div className="text-xs font-bold text-orange-400 mb-1">Conflicts</div>
+          {conflicts.map((c: string, i: number) => (
+            <p key={i} className="text-xs text-orange-300/80 leading-relaxed">- {c}</p>
+          ))}
+        </div>
+      )}
+
+      {/* Action Box */}
       {targetPrice && stopPrice && (
-        <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 mb-3">
+        <div className={`${
+          signalAction === 'SELL' ? 'bg-red-500/10 border-red-500/20' :
+          signalAction === 'CONFLICTED' ? 'bg-orange-500/10 border-orange-500/20' :
+          'bg-blue-500/10 border-blue-500/20'
+        } border rounded-lg p-3 mb-3`}>
           <div className="flex items-center justify-between mb-1">
-            <span className="text-xs font-bold text-blue-400">ACTION: BUY</span>
+            <span className={`text-xs font-bold ${
+              signalAction === 'SELL' ? 'text-red-400' :
+              signalAction === 'CONFLICTED' ? 'text-orange-400' :
+              'text-blue-400'
+            }`}>ACTION: {signalAction}</span>
             {riskReward && (
-              <span className={`text-xs font-semibold ${
-                parseFloat(riskReward) >= 2 ? 'text-green-400' : parseFloat(riskReward) >= 1 ? 'text-yellow-400' : 'text-red-400'
-              }`}>R:R {riskReward}:1</span>
+              <span className="text-xs text-content-muted">
+                Risk ${Math.abs(entryPrice - stopPrice).toFixed(0)} to make ${Math.abs(targetPrice - entryPrice).toFixed(0)}
+              </span>
             )}
           </div>
           <div className="text-sm text-content-primary font-medium">
-            Entry ${entryPrice} → Target ${targetPrice} {upsidePct && <span className="text-green-400">(+{upsidePct}%)</span>}
+            Entry ${entryPrice} {'\u2192'} Target ${targetPrice} {upsidePct && <span className="text-green-400">(+{upsidePct}%)</span>}
           </div>
           <div className="text-xs text-content-muted">
             Stop ${stopPrice} {downsidePct && <span className="text-red-400">({downsidePct}%)</span>}
@@ -184,29 +170,29 @@ export default function SignalCard({ signal }: { signal: any }) {
         </div>
       )}
 
-      {/* Structured Analysis or fallback to reason/risk */}
-      {signal.analysis ? (
+      {/* Catalyst + Risk summary */}
+      {analysis.catalyst ? (
         <div className="text-xs space-y-1.5">
           <p className="text-content-secondary leading-relaxed">
-            <span className="text-blue-400 font-medium">Catalyst: </span>{signal.analysis.catalyst}
+            <span className="text-blue-400 font-medium">Catalyst: </span>{analysis.catalyst}
           </p>
           <p className="text-red-400/80 leading-relaxed">
-            <span className="font-medium">Risk: </span>{signal.analysis.headwinds}
+            <span className="font-medium">Risk: </span>{analysis.headwinds}
           </p>
         </div>
-      ) : (
+      ) : signal.reason ? (
         <div className="text-xs space-y-1">
           <p className="text-content-secondary leading-relaxed"><span className="text-content-faint font-medium">Why: </span>{signal.reason}</p>
           {signal.risk && (
             <p className="text-red-400/80 leading-relaxed"><span className="font-medium">Risk: </span>{signal.risk}</p>
           )}
         </div>
-      )}
+      ) : null}
 
       {/* Expanded details */}
       {expanded && (
         <div className="mt-4 pt-4 border-t border-border-subtle space-y-3">
-          {/* Improved Chart — AreaChart with gradient */}
+          {/* Chart */}
           {priceData?.prices?.length > 0 && (
             <div className="h-[120px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -240,68 +226,99 @@ export default function SignalCard({ signal }: { signal: any }) {
             </div>
           )}
 
-          {/* Structured Analysis Framework */}
-          {signal.analysis ? (
+          {/* Structured Analysis */}
+          {analysis.business_model || analysis.bull_case ? (
             <div className="space-y-2">
-              <div className="bg-surface-secondary/60 rounded-lg p-3">
-                <div className="text-xs font-medium text-content-faint mb-2">Company Profile</div>
-                <div className="space-y-1.5 text-xs">
-                  <AnalysisRow label="Business" value={signal.analysis.business_model} />
-                  <AnalysisRow label="Financials" value={signal.analysis.financial_health} />
-                  <AnalysisRow label="Moat" value={signal.analysis.competitive_position} />
-                  <AnalysisRow label="Valuation" value={signal.analysis.valuation} />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div className="bg-green-500/8 border border-green-500/15 rounded-lg p-3">
-                  <div className="text-xs font-medium text-green-400 mb-1">Bull Case</div>
-                  <p className="text-xs text-content-secondary leading-relaxed">{signal.analysis.bull_case}</p>
-                </div>
-                <div className="bg-red-500/8 border border-red-500/15 rounded-lg p-3">
-                  <div className="text-xs font-medium text-red-400 mb-1">Bear Case</div>
-                  <p className="text-xs text-content-secondary leading-relaxed">{signal.analysis.bear_case}</p>
-                </div>
-              </div>
-
-              {signal.analysis.recommendation && (
-                <div className="bg-blue-500/8 border border-blue-500/15 rounded-lg p-2.5">
-                  <p className="text-xs text-blue-300 leading-relaxed">{signal.analysis.recommendation}</p>
+              {/* Company Profile */}
+              {(analysis.business_model || analysis.valuation) && (
+                <div className="bg-surface-secondary/60 rounded-lg p-3">
+                  <div className="text-xs font-medium text-content-faint mb-2">Company Profile</div>
+                  <div className="space-y-1.5 text-xs">
+                    <AnalysisRow label="Business" value={analysis.business_model} />
+                    <AnalysisRow label="Valuation" value={analysis.valuation} />
+                  </div>
                 </div>
               )}
 
-              {/* Technical factors */}
-              <div className="bg-surface-secondary/60 rounded-lg p-3">
-                <div className="text-xs font-medium text-content-faint mb-2">Signal Factors</div>
-                <div className="space-y-1.5">
-                  {computeFactors(signal).map(f => (
-                    <div key={f.label} className="flex items-center gap-2 text-xs">
-                      <span className={`font-bold w-3 text-center ${FACTOR_ICON[f.status].color}`}>{FACTOR_ICON[f.status].icon}</span>
-                      <span className="text-content-secondary w-28">{f.label}</span>
-                      <span className="text-content-muted">{f.detail}</span>
+              {/* Technicals & Sentiment */}
+              {(analysis.technicals?.summary || analysis.sentiment?.summary) && (
+                <div className="grid grid-cols-2 gap-2">
+                  {analysis.technicals?.summary && (
+                    <div className="bg-surface-secondary/60 rounded-lg p-3">
+                      <div className="text-xs font-medium text-content-faint mb-1">Technicals</div>
+                      <p className="text-xs text-content-secondary leading-relaxed">{analysis.technicals.summary}</p>
+                      {analysis.technicals.indicators?.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {analysis.technicals.indicators.map((ind: string, i: number) => (
+                            <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-surface-secondary text-content-muted">{ind}</span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  )}
+                  {analysis.sentiment?.summary && (
+                    <div className="bg-surface-secondary/60 rounded-lg p-3">
+                      <div className="text-xs font-medium text-content-faint mb-1">Sentiment</div>
+                      <p className="text-xs text-content-secondary leading-relaxed">{analysis.sentiment.summary}</p>
+                    </div>
+                  )}
                 </div>
-              </div>
-            </div>
-          ) : (
-            /* Fallback: old-style score breakdown */
-            <div className="bg-surface-secondary/60 rounded-lg p-3">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-content-faint">Signal Score Breakdown</span>
-                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${CONF_BADGE[conf]}`}>{conf}</span>
-              </div>
-              <div className="space-y-1.5">
-                {computeFactors(signal).map(f => (
-                  <div key={f.label} className="flex items-center gap-2 text-xs">
-                    <span className={`font-bold w-3 text-center ${FACTOR_ICON[f.status].color}`}>{FACTOR_ICON[f.status].icon}</span>
-                    <span className="text-content-secondary w-28">{f.label}</span>
-                    <span className="text-content-muted">{f.detail}</span>
+              )}
+
+              {/* Bull / Bear cases */}
+              {(analysis.bull_case || analysis.bear_case) && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-green-500/8 border border-green-500/15 rounded-lg p-3">
+                    <div className="text-xs font-medium text-green-400 mb-1">Bull Case</div>
+                    <p className="text-xs text-content-secondary leading-relaxed">{analysis.bull_case}</p>
                   </div>
-                ))}
-              </div>
+                  <div className="bg-red-500/8 border border-red-500/15 rounded-lg p-3">
+                    <div className="text-xs font-medium text-red-400 mb-1">Bear Case</div>
+                    <p className="text-xs text-content-secondary leading-relaxed">{analysis.bear_case}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Invalidation + Upcoming Events */}
+              {(analysis.invalidation || analysis.upcoming_events?.length > 0) && (
+                <div className="bg-surface-secondary/60 rounded-lg p-3 space-y-1.5">
+                  {analysis.invalidation && (
+                    <div className="text-xs">
+                      <span className="text-red-400 font-medium">Invalidation: </span>
+                      <span className="text-content-secondary">{analysis.invalidation}</span>
+                    </div>
+                  )}
+                  {analysis.upcoming_events?.length > 0 && (
+                    <div className="text-xs">
+                      <span className="text-yellow-400 font-medium">Upcoming: </span>
+                      <span className="text-content-secondary">{analysis.upcoming_events.join(' | ')}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Recommendation */}
+              {analysis.recommendation && (
+                <div className="bg-blue-500/8 border border-blue-500/15 rounded-lg p-2.5">
+                  <p className="text-xs text-blue-300 leading-relaxed">{analysis.recommendation}</p>
+                </div>
+              )}
+
+              {/* Data Gaps */}
+              {dataGaps.length > 0 && (
+                <details className="text-xs">
+                  <summary className="text-content-faint cursor-pointer hover:text-content-muted">
+                    Data Gaps ({dataGaps.length})
+                  </summary>
+                  <div className="mt-1.5 space-y-0.5 pl-3">
+                    {dataGaps.map((gap: string, i: number) => (
+                      <p key={i} className="text-content-ghost">- {gap}</p>
+                    ))}
+                  </div>
+                </details>
+              )}
             </div>
-          )}
+          ) : null}
 
           {/* News */}
           {signal.news?.length > 0 && (

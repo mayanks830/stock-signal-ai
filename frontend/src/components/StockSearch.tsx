@@ -61,14 +61,19 @@ interface StructuredAnalysis {
 }
 
 interface AiAnalysis {
-  outlook: string
+  outlook?: string
   signal: string
+  confidence?: number
   reasoning?: string
   price_target?: number | null
   stop_loss?: number | null
   risk?: string
   key_levels?: { support: number; resistance: number }
   analysis?: StructuredAnalysis
+  technicals?: { summary: string; indicators?: string[] }
+  sentiment?: { summary: string; sources?: string[] }
+  conflicts?: string[]
+  data_gaps?: string[]
 }
 
 interface SearchResult {
@@ -96,6 +101,14 @@ const signalColors: Record<string, string> = {
   BUY: 'bg-green-600 text-white',
   SELL: 'bg-red-600 text-white',
   HOLD: 'bg-gray-600 text-gray-200',
+  CONFLICTED: 'bg-orange-600 text-white',
+}
+
+function getConfBadge(conf: number): string {
+  if (conf >= 8) return 'bg-green-500/20 text-green-400'
+  if (conf >= 6) return 'bg-yellow-500/20 text-yellow-400'
+  if (conf >= 4) return 'bg-orange-500/20 text-orange-400'
+  return 'bg-red-500/20 text-red-400'
 }
 const sentimentColors: Record<string, string> = {
   POSITIVE: 'text-green-400',
@@ -391,12 +404,19 @@ function ResultDisplay({ result }: { result: SearchResult }) {
         <span className={`text-sm font-medium ${pctColor(p.daily_change_pct)}`}>
           {pctSign(p.daily_change_pct)} today
         </span>
-        <span className={`text-xs px-3 py-1 rounded-full border ${outlookColors[ai.outlook] || outlookColors.NEUTRAL}`}>
-          {ai.outlook}
-        </span>
+        {ai.outlook && (
+          <span className={`text-xs px-3 py-1 rounded-full border ${outlookColors[ai.outlook] || outlookColors.NEUTRAL}`}>
+            {ai.outlook}
+          </span>
+        )}
         <span className={`text-xs px-3 py-1 rounded-full font-bold ${signalColors[ai.signal] || signalColors.HOLD}`}>
           {ai.signal}
         </span>
+        {ai.confidence != null && (
+          <span className={`text-xs px-3 py-1 rounded-full font-medium ${getConfBadge(ai.confidence)}`}>
+            {ai.confidence}/10
+          </span>
+        )}
       </div>
 
       <div className="flex gap-4 text-xs text-content-faint">
@@ -508,6 +528,41 @@ function ResultDisplay({ result }: { result: SearchResult }) {
       <div className="border border-border bg-surface-secondary rounded-xl p-5 space-y-4">
         <h3 className="text-sm font-semibold text-content-muted uppercase tracking-wide">AI Analysis</h3>
 
+        {/* Conflicts warning */}
+        {ai.conflicts && ai.conflicts.length > 0 && (
+          <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3">
+            <div className="text-xs font-bold text-orange-400 mb-1">Conflicts Detected</div>
+            {ai.conflicts.map((c, i) => (
+              <p key={i} className="text-sm text-orange-300/80 leading-relaxed">- {c}</p>
+            ))}
+          </div>
+        )}
+
+        {/* Technicals & Sentiment summaries */}
+        {(ai.technicals?.summary || ai.sentiment?.summary) && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {ai.technicals?.summary && (
+              <div className="bg-surface-primary/40 rounded-lg p-3">
+                <div className="text-xs font-semibold text-content-faint mb-1">Technicals</div>
+                <p className="text-sm text-content-secondary leading-relaxed">{ai.technicals.summary}</p>
+                {ai.technicals.indicators && ai.technicals.indicators.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {ai.technicals.indicators.map((ind, i) => (
+                      <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-surface-secondary text-content-muted">{ind}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {ai.sentiment?.summary && (
+              <div className="bg-surface-primary/40 rounded-lg p-3">
+                <div className="text-xs font-semibold text-content-faint mb-1">Sentiment</div>
+                <p className="text-sm text-content-secondary leading-relaxed">{ai.sentiment.summary}</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {ai.analysis ? (
           <>
             {/* Company Profile */}
@@ -526,6 +581,9 @@ function ResultDisplay({ result }: { result: SearchResult }) {
               )}
               {ai.analysis.catalyst && (
                 <AnalysisField label="Catalyst" value={ai.analysis.catalyst} color="text-blue-400" />
+              )}
+              {ai.analysis.headwinds && (
+                <AnalysisField label="Headwinds" value={ai.analysis.headwinds} color="text-red-400" />
               )}
               {ai.analysis.technical_summary && (
                 <AnalysisField label="Technical Setup" value={ai.analysis.technical_summary} />
@@ -576,6 +634,20 @@ function ResultDisplay({ result }: { result: SearchResult }) {
             </>
           )}
         </div>
+
+        {/* Data Gaps */}
+        {ai.data_gaps && ai.data_gaps.length > 0 && (
+          <details className="text-xs">
+            <summary className="text-content-faint cursor-pointer hover:text-content-muted">
+              Data Gaps ({ai.data_gaps.length})
+            </summary>
+            <div className="mt-1.5 space-y-0.5 pl-3">
+              {ai.data_gaps.map((gap, i) => (
+                <p key={i} className="text-content-ghost">- {gap}</p>
+              ))}
+            </div>
+          </details>
+        )}
 
         {/* Headwinds fallback for old format */}
         {!ai.analysis && ai.risk && (

@@ -26,6 +26,9 @@ def _parse_signal_json(s: dict) -> None:
         except Exception:
             s["analysis"] = None
     s.pop("analysis_json", None)
+    # Default signal field for older records
+    if "signal" not in s or not s["signal"]:
+        s["signal"] = "BUY"
 
 
 @router.get("/signals")

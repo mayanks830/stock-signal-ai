@@ -27,8 +27,13 @@ export default function FilterBar({
     <div className="flex flex-wrap items-center gap-2 mb-4">
       {/* Confidence */}
       <span className="text-xs text-content-faint mr-1">Confidence:</span>
-      {['All', 'HIGH', 'MEDIUM'].map(v => (
-        <button key={v} className={pill(confidence === v)} onClick={() => onConfidence(v)}>{v}</button>
+      {[
+        { value: 'All', label: 'All' },
+        { value: '7+', label: '7+' },
+        { value: '5+', label: '5+' },
+        { value: '<5', label: '<5' },
+      ].map(v => (
+        <button key={v.value} className={pill(confidence === v.value)} onClick={() => onConfidence(v.value)}>{v.label}</button>
       ))}
 
       <span className="text-border-subtle mx-1">|</span>

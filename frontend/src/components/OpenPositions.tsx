@@ -21,7 +21,13 @@ export default function OpenPositions() {
   const filtered = useMemo(() => {
     if (!data?.length) return []
     return data.filter((s: any) => {
-      if (confidence !== 'All' && (s.confidence || '').toUpperCase() !== confidence) return false
+      if (confidence !== 'All') {
+        const raw = s.confidence || '5'
+        const confNum = raw === 'HIGH' ? 8 : raw === 'MEDIUM' ? 6 : parseInt(raw) || 5
+        if (confidence === '7+' && confNum < 7) return false
+        if (confidence === '5+' && confNum < 5) return false
+        if (confidence === '<5' && confNum >= 5) return false
+      }
       if (sector !== 'All' && s.sector !== sector) return false
       return true
     })

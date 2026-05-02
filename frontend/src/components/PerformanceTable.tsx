@@ -26,8 +26,8 @@ export default function PerformanceTable() {
       let av = a[sortKey], bv = b[sortKey]
       if (sortKey === 'signaled_at') { av = av || ''; bv = bv || '' }
       if (sortKey === 'confidence') {
-        const rank: Record<string, number> = { HIGH: 2, MEDIUM: 1 }
-        av = rank[av] ?? 0; bv = rank[bv] ?? 0
+        const parseConf = (v: any) => v === 'HIGH' ? 8 : v === 'MEDIUM' ? 6 : parseInt(v) || 5
+        av = parseConf(av); bv = parseConf(bv)
       }
       if (sortKey === 'outcome') {
         const rank: Record<string, number> = { WIN: 3, LOSS: 2, OPEN: 1 }
@@ -80,9 +80,12 @@ export default function PerformanceTable() {
                 <td className="py-3 pr-4 font-semibold text-content-primary">{r.ticker}</td>
                 <td className="py-3 pr-4 text-content-muted">{r.sector}</td>
                 <td className="py-3 pr-4">
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${r.confidence === 'HIGH' ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                    {r.confidence}
-                  </span>
+                  {(() => {
+                    const raw = r.confidence || '5'
+                    const num = raw === 'HIGH' ? 8 : raw === 'MEDIUM' ? 6 : parseInt(raw) || 5
+                    const color = num >= 7 ? 'bg-green-500/20 text-green-400' : num >= 5 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'
+                    return <span className={`text-xs px-2 py-0.5 rounded-full ${color}`}>{num}/10</span>
+                  })()}
                 </td>
                 <td className="py-3 pr-4 text-content-muted">{r.signaled_at ? new Date(r.signaled_at).toLocaleDateString() : '—'}</td>
                 <td className="py-3 pr-4 text-right text-content-secondary">${r.entry_price}</td>
