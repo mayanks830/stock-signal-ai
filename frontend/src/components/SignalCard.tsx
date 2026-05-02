@@ -2,47 +2,41 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AreaChart, Area, ReferenceLine, ResponsiveContainer, Tooltip } from 'recharts'
 
-const TREND_ARROW: Record<string, string> = { up: '\u2191', down: '\u2193' }
-
-const SIGNAL_TYPE_BADGE: Record<string, { label: string; color: string }> = {
-  MOMENTUM: { label: 'Momentum', color: 'bg-green-500/20 text-green-400' },
-  EARLY: { label: 'Early Signal', color: 'bg-blue-500/20 text-blue-400' },
-  DIP_BUY: { label: 'Buy the Dip', color: 'bg-orange-500/20 text-orange-400' },
-  PULLBACK: { label: 'Pullback', color: 'bg-purple-500/20 text-purple-400' },
-  CONGRESS: { label: 'Congress', color: 'bg-yellow-500/20 text-yellow-400' },
+const SIGNAL_TYPE_LABEL: Record<string, string> = {
+  MOMENTUM: 'Momentum',
+  EARLY: 'Early Signal',
+  DIP_BUY: 'Buy the Dip',
+  PULLBACK: 'Pullback',
+  CONGRESS: 'Congress',
 }
 
-// Signal action badge colors
-const SIGNAL_BADGE: Record<string, { label: string; color: string; border: string }> = {
-  BUY: { label: 'BUY', color: 'bg-green-500/20 text-green-400', border: 'border-green-500' },
-  SELL: { label: 'SELL', color: 'bg-red-500/20 text-red-400', border: 'border-red-500' },
-  HOLD: { label: 'HOLD', color: 'bg-gray-500/20 text-gray-400', border: 'border-gray-500' },
-  CONFLICTED: { label: 'CONFLICTED', color: 'bg-orange-500/20 text-orange-400', border: 'border-orange-500' },
+const SIGNAL_BADGE: Record<string, { label: string; bg: string; text: string }> = {
+  BUY: { label: 'BUY', bg: 'bg-green-600', text: 'text-white' },
+  SELL: { label: 'SELL', bg: 'bg-red-600', text: 'text-white' },
+  HOLD: { label: 'HOLD', bg: 'bg-gray-600', text: 'text-white' },
+  CONFLICTED: { label: 'CONFLICTED', bg: 'bg-orange-500', text: 'text-white' },
 }
 
-function getConfidenceBg(conf: number): string {
-  if (conf >= 8) return 'bg-green-500/20 text-green-400'
-  if (conf >= 6) return 'bg-yellow-500/20 text-yellow-400'
-  if (conf >= 4) return 'bg-orange-500/20 text-orange-400'
-  return 'bg-red-500/20 text-red-400'
+function parseConfidence(raw: any): number {
+  if (!raw) return 5
+  if (raw === 'HIGH') return 8
+  if (raw === 'MEDIUM') return 6
+  return parseInt(raw) || 5
 }
 
-function getCardBorder(signal: string, conf: number): string {
-  if (signal === 'CONFLICTED') return 'border-orange-500 bg-orange-500/5'
-  if (signal === 'SELL') return 'border-red-500 bg-red-500/5'
-  if (conf >= 7) return 'border-green-500 bg-green-500/10'
-  if (conf >= 5) return 'border-yellow-500 bg-yellow-500/10'
-  return 'border-border-subtle bg-surface-secondary'
+function getCardBorder(signal: string): string {
+  if (signal === 'CONFLICTED') return 'border-l-orange-500'
+  if (signal === 'SELL') return 'border-l-red-500'
+  if (signal === 'BUY') return 'border-l-green-500'
+  return 'border-l-gray-500'
 }
 
-export default function SignalCard({ signal }: { signal: any }) {
+export default function SignalCard({ signal, rank }: { signal: any; rank?: number }) {
   const [expanded, setExpanded] = useState(false)
 
-  // Parse confidence: handle both "HIGH"/"MEDIUM" (legacy) and "1"-"10" (new)
-  const rawConf = signal.confidence || '5'
-  const confNum = rawConf === 'HIGH' ? 8 : rawConf === 'MEDIUM' ? 6 : parseInt(rawConf) || 5
+  const confNum = parseConfidence(signal.confidence)
   const signalAction = signal.signal || 'BUY'
-  const signalBadge = SIGNAL_BADGE[signalAction] || SIGNAL_BADGE.HOLD
+  const badge = SIGNAL_BADGE[signalAction] || SIGNAL_BADGE.HOLD
 
   const { data: priceData } = useQuery({
     queryKey: ['prices', signal.id],
@@ -64,137 +58,127 @@ export default function SignalCard({ signal }: { signal: any }) {
     ? Math.abs((targetPrice - entryPrice) / (entryPrice - stopPrice)).toFixed(1)
     : null
 
+  const pctChange = signal.pct_change ?? 0
+  const isPositive = pctChange >= 0
+
   const latestPrice = priceData?.prices?.length > 0
     ? priceData.prices[priceData.prices.length - 1].price
     : null
-  const isWinning = latestPrice != null ? latestPrice >= entryPrice : true
-  const chartColor = isWinning ? '#22c55e' : '#ef4444'
+  const chartColor = (latestPrice != null ? latestPrice >= entryPrice : true) ? '#22c55e' : '#ef4444'
 
   const analysis = signal.analysis || {}
   const conflicts = analysis.conflicts || []
   const dataGaps = analysis.data_gaps || []
 
+  // One-line catalyst text
+  const catalystLine = analysis.catalyst || signal.reason || ''
+
   return (
-    <div
-      className={`border rounded-xl p-4 cursor-pointer transition hover:border-opacity-80 ${getCardBorder(signalAction, confNum)}`}
-      onClick={() => setExpanded(!expanded)}
-    >
-      {/* Header */}
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-lg font-bold text-content-primary">{signal.ticker}</span>
-            {/* Signal action badge */}
-            <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${signalBadge.color}`}>
-              {signalBadge.label}
+    <div className={`border border-border rounded-xl overflow-hidden transition hover:border-opacity-80 border-l-4 ${getCardBorder(signalAction)}`}>
+      {/* === COLLAPSED VIEW (always visible) === */}
+      <div className="p-4 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        {/* Row 1: Rank + Signal Badge + Confidence + Type */}
+        <div className="flex items-center gap-3 mb-3">
+          {rank != null && (
+            <span className="text-sm font-bold text-content-faint w-7 shrink-0">#{rank}</span>
+          )}
+          <span className={`text-xl font-black px-4 py-1 rounded-lg ${badge.bg} ${badge.text}`}>
+            {badge.label}
+          </span>
+          <span className="text-lg font-bold text-blue-400">{confNum}/10</span>
+          {signal.signal_type && (
+            <span className="text-xs px-2.5 py-1 rounded-full bg-blue-500/15 text-blue-400 font-medium">
+              {SIGNAL_TYPE_LABEL[signal.signal_type] || signal.signal_type}
             </span>
-            {/* Confidence */}
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getConfidenceBg(confNum)}`}>
-              {confNum}/10
-            </span>
-            {/* Signal type */}
-            {signal.signal_type && (
-              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${SIGNAL_TYPE_BADGE[signal.signal_type]?.color || 'bg-gray-500/20 text-gray-400'}`}>
-                {SIGNAL_TYPE_BADGE[signal.signal_type]?.label || signal.signal_type}
-              </span>
-            )}
-            {/* Outcome */}
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-              signal.outcome === 'WIN' ? 'bg-green-500/20 text-green-400' :
-              signal.outcome === 'LOSS' ? 'bg-red-500/20 text-red-400' :
-              'bg-blue-500/15 text-blue-400'
-            }`}>{signal.outcome === 'WIN' ? 'WIN' : signal.outcome === 'LOSS' ? 'LOSS' : 'OPEN'}</span>
-            {signal.earnings_within_7d && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/20 text-red-400">Earnings</span>
-            )}
-          </div>
-          <div className="text-xs text-content-muted mt-0.5">{signal.name} · {signal.sector}</div>
-        </div>
-        <div className="text-right">
-          <div className="text-content-primary font-semibold">${entryPrice}</div>
-          <div className={`text-sm font-medium ${signal.wow_change_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {signal.wow_change_pct >= 0 ? '\u2191' : '\u2193'} {Math.abs(signal.wow_change_pct).toFixed(2)}% WoW
-          </div>
-        </div>
-      </div>
-
-      {/* Key metrics */}
-      <div className="grid grid-cols-3 gap-2 mb-3">
-        <Metric label="vs S&P 500" value={signal.relative_strength_vs_spy != null ? `${signal.relative_strength_vs_spy >= 0 ? '+' : ''}${signal.relative_strength_vs_spy?.toFixed(1)}%` : 'N/A'} />
-        <Metric label="Volume" value={signal.volume_ratio ? `${signal.volume_ratio}x` : 'N/A'} />
-        <Metric label="Sentiment" value={signal.sentiment_score != null ? (signal.sentiment_score >= 0 ? `+${signal.sentiment_score?.toFixed(2)}` : signal.sentiment_score?.toFixed(2)) : 'N/A'} />
-      </div>
-
-      {/* Trend arrows */}
-      <div className="flex gap-3 text-xs text-content-muted mb-3">
-        <span>1d <span className={signal.trend_1d === 'up' ? 'text-green-400' : 'text-red-400'}>{TREND_ARROW[signal.trend_1d] || '?'}</span></span>
-        <span>1w <span className={signal.trend_1w === 'up' ? 'text-green-400' : 'text-red-400'}>{TREND_ARROW[signal.trend_1w] || '?'}</span></span>
-        <span>1m <span className={signal.trend_1m === 'up' ? 'text-green-400' : 'text-red-400'}>{TREND_ARROW[signal.trend_1m] || '?'}</span></span>
-      </div>
-
-      {/* Conflicts warning */}
-      {conflicts.length > 0 && (
-        <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-2.5 mb-3">
-          <div className="text-xs font-bold text-orange-400 mb-1">Conflicts</div>
-          {conflicts.map((c: string, i: number) => (
-            <p key={i} className="text-xs text-orange-300/80 leading-relaxed">- {c}</p>
-          ))}
-        </div>
-      )}
-
-      {/* Action Box */}
-      {targetPrice && stopPrice && (
-        <div className={`${
-          signalAction === 'SELL' ? 'bg-red-500/10 border-red-500/20' :
-          signalAction === 'CONFLICTED' ? 'bg-orange-500/10 border-orange-500/20' :
-          'bg-blue-500/10 border-blue-500/20'
-        } border rounded-lg p-3 mb-3`}>
-          <div className="flex items-center justify-between mb-1">
-            <span className={`text-xs font-bold ${
-              signalAction === 'SELL' ? 'text-red-400' :
-              signalAction === 'CONFLICTED' ? 'text-orange-400' :
-              'text-blue-400'
-            }`}>ACTION: {signalAction}</span>
-            {riskReward && (
-              <span className="text-xs text-content-muted">
-                Risk ${Math.abs(entryPrice - stopPrice).toFixed(0)} to make ${Math.abs(targetPrice - entryPrice).toFixed(0)}
-              </span>
-            )}
-          </div>
-          <div className="text-sm text-content-primary font-medium">
-            Entry ${entryPrice} {'\u2192'} Target ${targetPrice} {upsidePct && <span className="text-green-400">(+{upsidePct}%)</span>}
-          </div>
-          <div className="text-xs text-content-muted">
-            Stop ${stopPrice} {downsidePct && <span className="text-red-400">({downsidePct}%)</span>}
-          </div>
-        </div>
-      )}
-
-      {/* Catalyst + Risk summary */}
-      {analysis.catalyst ? (
-        <div className="text-xs space-y-1.5">
-          <p className="text-content-secondary leading-relaxed">
-            <span className="text-blue-400 font-medium">Catalyst: </span>{analysis.catalyst}
-          </p>
-          <p className="text-red-400/80 leading-relaxed">
-            <span className="font-medium">Risk: </span>{analysis.headwinds}
-          </p>
-        </div>
-      ) : signal.reason ? (
-        <div className="text-xs space-y-1">
-          <p className="text-content-secondary leading-relaxed"><span className="text-content-faint font-medium">Why: </span>{signal.reason}</p>
-          {signal.risk && (
-            <p className="text-red-400/80 leading-relaxed"><span className="font-medium">Risk: </span>{signal.risk}</p>
+          )}
+          {signal.outcome && signal.outcome !== 'OPEN' && (
+            <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+              signal.outcome === 'WIN' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+            }`}>{signal.outcome}</span>
           )}
         </div>
-      ) : null}
 
-      {/* Expanded details */}
+        {/* Row 2: Ticker + Company + Sector */}
+        <div className="flex items-baseline gap-2 mb-3">
+          <span className="text-lg font-bold text-content-primary">{signal.ticker}</span>
+          {signal.name && <span className="text-sm text-content-muted">{signal.name}</span>}
+          {signal.sector && <span className="text-xs text-content-faint">· {signal.sector}</span>}
+          {signal.earnings_within_7d && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400">Earnings Soon</span>
+          )}
+        </div>
+
+        {/* Row 3: Price pills — Entry / Target / Stop */}
+        <div className="flex flex-wrap items-center gap-3 mb-3">
+          <div className="bg-surface-secondary rounded-lg px-3 py-1.5">
+            <div className="text-xs text-content-faint">Entry</div>
+            <div className="text-base font-semibold text-content-primary">${entryPrice}</div>
+          </div>
+          {targetPrice && (
+            <div className="bg-surface-secondary rounded-lg px-3 py-1.5">
+              <div className="text-xs text-content-faint">Target</div>
+              <div className="text-base font-semibold text-content-primary">
+                ${targetPrice}
+                {upsidePct && <span className="text-green-400 text-sm ml-1">+{upsidePct}%</span>}
+              </div>
+            </div>
+          )}
+          {stopPrice && (
+            <div className="bg-surface-secondary rounded-lg px-3 py-1.5">
+              <div className="text-xs text-content-faint">Stop</div>
+              <div className="text-base font-semibold text-content-primary">
+                ${stopPrice}
+                {downsidePct && <span className="text-red-400 text-sm ml-1">{downsidePct}%</span>}
+              </div>
+            </div>
+          )}
+          {riskReward && (
+            <div className="bg-surface-secondary rounded-lg px-3 py-1.5">
+              <div className="text-xs text-content-faint">R:R</div>
+              <div className="text-base font-semibold text-blue-400">{riskReward}:1</div>
+            </div>
+          )}
+        </div>
+
+        {/* Row 4: P&L return bar */}
+        <div className="mb-3">
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-2 bg-surface-tertiary rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full ${isPositive ? 'bg-green-500' : 'bg-red-500'}`}
+                style={{ width: `${Math.min(Math.abs(pctChange) * 5, 100)}%` }}
+              />
+            </div>
+            <span className={`text-sm font-bold ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+              {isPositive ? '+' : ''}{pctChange.toFixed(2)}%
+            </span>
+          </div>
+        </div>
+
+        {/* Row 5: One-line catalyst */}
+        {catalystLine && (
+          <p className="text-sm text-content-secondary line-clamp-1 mb-3">
+            {catalystLine}
+          </p>
+        )}
+
+        {/* Row 6: Expand trigger */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-content-faint">
+            {new Date(signal.signaled_at).toLocaleDateString()}
+          </span>
+          <span className="text-sm text-blue-400 font-medium">
+            {expanded ? '- Hide Analysis' : '+ View Analysis'}
+          </span>
+        </div>
+      </div>
+
+      {/* === EXPANDED VIEW (on click) === */}
       {expanded && (
-        <div className="mt-4 pt-4 border-t border-border-subtle space-y-3">
+        <div className="border-t border-border px-4 pb-4 pt-3 space-y-4">
           {/* Chart */}
           {priceData?.prices?.length > 0 && (
-            <div className="h-[120px]">
+            <div className="h-[140px]">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={priceData.prices}>
                   <defs>
@@ -215,10 +199,10 @@ export default function SignalCard({ signal }: { signal: any }) {
                     y={entryPrice}
                     stroke="#6b7280"
                     strokeDasharray="4 3"
-                    label={{ value: `Entry $${entryPrice}`, position: 'right', fill: '#9ca3af', fontSize: 10 }}
+                    label={{ value: `Entry $${entryPrice}`, position: 'right', fill: '#9ca3af', fontSize: 11 }}
                   />
                   <Tooltip
-                    contentStyle={{ backgroundColor: 'rgb(var(--color-bg-secondary))', border: '1px solid rgb(var(--color-border-subtle))', fontSize: '11px' }}
+                    contentStyle={{ backgroundColor: 'rgb(var(--color-bg-secondary))', border: '1px solid rgb(var(--color-border-subtle))', fontSize: '12px' }}
                     formatter={(v: any) => [`$${v}`, 'Price']}
                   />
                 </AreaChart>
@@ -226,16 +210,50 @@ export default function SignalCard({ signal }: { signal: any }) {
             </div>
           )}
 
+          {/* Metrics grid */}
+          <div className="grid grid-cols-3 gap-2">
+            <Metric label="vs S&P 500" value={signal.relative_strength_vs_spy != null ? `${signal.relative_strength_vs_spy >= 0 ? '+' : ''}${signal.relative_strength_vs_spy?.toFixed(1)}%` : 'N/A'} />
+            <Metric label="Volume" value={signal.volume_ratio ? `${signal.volume_ratio}x` : 'N/A'} />
+            <Metric label="Sentiment" value={signal.sentiment_score != null ? (signal.sentiment_score >= 0 ? `+${signal.sentiment_score?.toFixed(2)}` : signal.sentiment_score?.toFixed(2)) : 'N/A'} />
+          </div>
+
+          {/* Trend arrows */}
+          <div className="flex gap-4 text-sm text-content-muted">
+            <TrendItem label="1d" direction={signal.trend_1d} />
+            <TrendItem label="1w" direction={signal.trend_1w} />
+            <TrendItem label="1m" direction={signal.trend_1m} />
+          </div>
+
+          {/* Conflicts warning */}
+          {conflicts.length > 0 && (
+            <div className="bg-orange-500/10 border border-orange-500/20 rounded-lg p-3">
+              <div className="text-sm font-bold text-orange-400 mb-1">Conflicts</div>
+              {conflicts.map((c: string, i: number) => (
+                <p key={i} className="text-sm text-orange-300/80 leading-relaxed">- {c}</p>
+              ))}
+            </div>
+          )}
+
           {/* Structured Analysis */}
-          {analysis.business_model || analysis.bull_case ? (
-            <div className="space-y-2">
+          {(analysis.business_model || analysis.bull_case) && (
+            <div className="space-y-3">
               {/* Company Profile */}
               {(analysis.business_model || analysis.valuation) && (
                 <div className="bg-surface-secondary/60 rounded-lg p-3">
                   <div className="text-xs font-medium text-content-faint mb-2">Company Profile</div>
-                  <div className="space-y-1.5 text-xs">
-                    <AnalysisRow label="Business" value={analysis.business_model} />
-                    <AnalysisRow label="Valuation" value={analysis.valuation} />
+                  <div className="space-y-1.5 text-sm">
+                    {analysis.business_model && (
+                      <div className="flex gap-2">
+                        <span className="text-content-faint font-medium w-20 shrink-0">Business</span>
+                        <span className="text-content-secondary">{analysis.business_model}</span>
+                      </div>
+                    )}
+                    {analysis.valuation && (
+                      <div className="flex gap-2">
+                        <span className="text-content-faint font-medium w-20 shrink-0">Valuation</span>
+                        <span className="text-content-secondary">{analysis.valuation}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -246,11 +264,11 @@ export default function SignalCard({ signal }: { signal: any }) {
                   {analysis.technicals?.summary && (
                     <div className="bg-surface-secondary/60 rounded-lg p-3">
                       <div className="text-xs font-medium text-content-faint mb-1">Technicals</div>
-                      <p className="text-xs text-content-secondary leading-relaxed">{analysis.technicals.summary}</p>
+                      <p className="text-sm text-content-secondary leading-relaxed">{analysis.technicals.summary}</p>
                       {analysis.technicals.indicators?.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1.5">
+                        <div className="flex flex-wrap gap-1 mt-2">
                           {analysis.technicals.indicators.map((ind: string, i: number) => (
-                            <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-surface-secondary text-content-muted">{ind}</span>
+                            <span key={i} className="text-xs px-1.5 py-0.5 rounded bg-surface-secondary text-content-muted">{ind}</span>
                           ))}
                         </div>
                       )}
@@ -259,7 +277,7 @@ export default function SignalCard({ signal }: { signal: any }) {
                   {analysis.sentiment?.summary && (
                     <div className="bg-surface-secondary/60 rounded-lg p-3">
                       <div className="text-xs font-medium text-content-faint mb-1">Sentiment</div>
-                      <p className="text-xs text-content-secondary leading-relaxed">{analysis.sentiment.summary}</p>
+                      <p className="text-sm text-content-secondary leading-relaxed">{analysis.sentiment.summary}</p>
                     </div>
                   )}
                 </div>
@@ -268,14 +286,18 @@ export default function SignalCard({ signal }: { signal: any }) {
               {/* Bull / Bear cases */}
               {(analysis.bull_case || analysis.bear_case) && (
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-green-500/8 border border-green-500/15 rounded-lg p-3">
-                    <div className="text-xs font-medium text-green-400 mb-1">Bull Case</div>
-                    <p className="text-xs text-content-secondary leading-relaxed">{analysis.bull_case}</p>
-                  </div>
-                  <div className="bg-red-500/8 border border-red-500/15 rounded-lg p-3">
-                    <div className="text-xs font-medium text-red-400 mb-1">Bear Case</div>
-                    <p className="text-xs text-content-secondary leading-relaxed">{analysis.bear_case}</p>
-                  </div>
+                  {analysis.bull_case && (
+                    <div className="bg-green-500/5 border border-green-500/15 rounded-lg p-3">
+                      <div className="text-xs font-medium text-green-400 mb-1">Bull Case</div>
+                      <p className="text-sm text-content-secondary leading-relaxed">{analysis.bull_case}</p>
+                    </div>
+                  )}
+                  {analysis.bear_case && (
+                    <div className="bg-red-500/5 border border-red-500/15 rounded-lg p-3">
+                      <div className="text-xs font-medium text-red-400 mb-1">Bear Case</div>
+                      <p className="text-sm text-content-secondary leading-relaxed">{analysis.bear_case}</p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -283,14 +305,14 @@ export default function SignalCard({ signal }: { signal: any }) {
               {(analysis.invalidation || analysis.upcoming_events?.length > 0) && (
                 <div className="bg-surface-secondary/60 rounded-lg p-3 space-y-1.5">
                   {analysis.invalidation && (
-                    <div className="text-xs">
+                    <div className="text-sm">
                       <span className="text-red-400 font-medium">Invalidation: </span>
                       <span className="text-content-secondary">{analysis.invalidation}</span>
                     </div>
                   )}
                   {analysis.upcoming_events?.length > 0 && (
-                    <div className="text-xs">
-                      <span className="text-yellow-400 font-medium">Upcoming: </span>
+                    <div className="text-sm">
+                      <span className="text-orange-400 font-medium">Upcoming: </span>
                       <span className="text-content-secondary">{analysis.upcoming_events.join(' | ')}</span>
                     </div>
                   )}
@@ -299,33 +321,61 @@ export default function SignalCard({ signal }: { signal: any }) {
 
               {/* Recommendation */}
               {analysis.recommendation && (
-                <div className="bg-blue-500/8 border border-blue-500/15 rounded-lg p-2.5">
-                  <p className="text-xs text-blue-300 leading-relaxed">{analysis.recommendation}</p>
+                <div className="bg-blue-500/8 border border-blue-500/15 rounded-lg p-3">
+                  <p className="text-sm text-blue-300 leading-relaxed">{analysis.recommendation}</p>
+                </div>
+              )}
+
+              {/* Full catalyst + headwinds (expanded only) */}
+              {analysis.catalyst && (
+                <div className="text-sm space-y-1.5">
+                  <p className="text-content-secondary leading-relaxed">
+                    <span className="text-blue-400 font-medium">Catalyst: </span>{analysis.catalyst}
+                  </p>
+                  {analysis.headwinds && (
+                    <p className="text-content-secondary leading-relaxed">
+                      <span className="text-content-faint font-medium">Headwinds: </span>{analysis.headwinds}
+                    </p>
+                  )}
                 </div>
               )}
 
               {/* Data Gaps */}
               {dataGaps.length > 0 && (
-                <details className="text-xs">
+                <details className="text-sm">
                   <summary className="text-content-faint cursor-pointer hover:text-content-muted">
                     Data Gaps ({dataGaps.length})
                   </summary>
                   <div className="mt-1.5 space-y-0.5 pl-3">
                     {dataGaps.map((gap: string, i: number) => (
-                      <p key={i} className="text-content-ghost">- {gap}</p>
+                      <p key={i} className="text-content-faint">- {gap}</p>
                     ))}
                   </div>
                 </details>
               )}
             </div>
-          ) : null}
+          )}
+
+          {/* Legacy reason/risk (for old signals without structured analysis) */}
+          {!analysis.catalyst && signal.reason && (
+            <div className="text-sm space-y-1">
+              <p className="text-content-secondary leading-relaxed">
+                <span className="text-content-faint font-medium">Why: </span>{signal.reason}
+              </p>
+              {signal.risk && (
+                <p className="text-content-secondary leading-relaxed">
+                  <span className="text-content-faint font-medium">Risk: </span>{signal.risk}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* News */}
           {signal.news?.length > 0 && (
-            <div className="space-y-1">
-              <div className="text-xs text-content-faint font-medium">Recent News</div>
+            <div className="space-y-1.5">
+              <div className="text-xs font-medium text-content-faint">Recent News</div>
               {signal.news.map((n: any, i: number) => (
-                <div key={i} className="text-xs text-content-secondary flex gap-2">
+                <div key={i} className="text-sm text-content-secondary flex gap-2">
                   <span className={`shrink-0 ${n.sentiment === 'POSITIVE' ? 'text-green-400' : n.sentiment === 'NEGATIVE' ? 'text-red-400' : 'text-content-faint'}`}>
                     {n.sentiment === 'POSITIVE' ? '\u25cf' : n.sentiment === 'NEGATIVE' ? '\u25cf' : '\u25cb'}
                   </span>
@@ -339,7 +389,7 @@ export default function SignalCard({ signal }: { signal: any }) {
             </div>
           )}
 
-          <div className="text-xs text-content-ghost text-right">
+          <div className="text-xs text-content-faint text-right">
             {new Date(signal.signaled_at).toLocaleString()}
           </div>
         </div>
@@ -350,19 +400,17 @@ export default function SignalCard({ signal }: { signal: any }) {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-surface-secondary/60 rounded-lg p-2 text-center">
+    <div className="bg-surface-secondary/60 rounded-lg p-2.5 text-center">
       <div className="text-content-faint text-xs">{label}</div>
-      <div className="text-content-primary text-xs font-medium">{value}</div>
+      <div className="text-content-primary text-sm font-medium">{value}</div>
     </div>
   )
 }
 
-function AnalysisRow({ label, value }: { label: string; value?: string }) {
-  if (!value) return null
+function TrendItem({ label, direction }: { label: string; direction?: string }) {
+  const arrow = direction === 'up' ? '\u2191' : direction === 'down' ? '\u2193' : '?'
+  const color = direction === 'up' ? 'text-green-400' : direction === 'down' ? 'text-red-400' : 'text-content-faint'
   return (
-    <div className="flex gap-2">
-      <span className="text-content-faint font-medium w-16 shrink-0">{label}</span>
-      <span className="text-content-secondary leading-relaxed">{value}</span>
-    </div>
+    <span>{label} <span className={color}>{arrow}</span></span>
   )
 }

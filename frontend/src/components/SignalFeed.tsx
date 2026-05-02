@@ -19,6 +19,15 @@ const SIGNAL_LABELS: Record<string, string> = {
   CONFLICTED: 'Conflicted',
 }
 
+type SortBy = 'confidence' | 'return' | 'date'
+
+function parseConf(raw: any): number {
+  if (!raw) return 5
+  if (raw === 'HIGH') return 8
+  if (raw === 'MEDIUM') return 6
+  return parseInt(raw) || 5
+}
+
 export default function SignalFeed() {
   const { data, isLoading, dataUpdatedAt } = useQuery({
     queryKey: ['signals'],
@@ -30,6 +39,7 @@ export default function SignalFeed() {
   const [sector, setSector] = useState('All')
   const [signalType, setSignalType] = useState('All')
   const [signalAction, setSignalAction] = useState('All')
+  const [sortBy, setSortBy] = useState<SortBy>('confidence')
 
   const sectors = useMemo(() => {
     if (!data?.length) return []
@@ -49,10 +59,8 @@ export default function SignalFeed() {
   const filtered = useMemo(() => {
     if (!data?.length) return []
     let result = data.filter((s: any) => {
-      // Confidence filter: parse legacy HIGH/MEDIUM or numeric 1-10
       if (confidence !== 'All') {
-        const raw = s.confidence || '5'
-        const confNum = raw === 'HIGH' ? 8 : raw === 'MEDIUM' ? 6 : parseInt(raw) || 5
+        const confNum = parseConf(s.confidence)
         if (confidence === '7+' && confNum < 7) return false
         if (confidence === '5+' && confNum < 5) return false
         if (confidence === '<5' && confNum >= 5) return false
@@ -63,17 +71,40 @@ export default function SignalFeed() {
       if (signalAction !== 'All' && (s.signal || 'BUY') !== signalAction) return false
       return true
     })
-    // Sort by confidence (highest first)
+
+    // Sort
     result.sort((a: any, b: any) => {
-      const confA = a.confidence === 'HIGH' ? 8 : a.confidence === 'MEDIUM' ? 6 : parseInt(a.confidence) || 5
-      const confB = b.confidence === 'HIGH' ? 8 : b.confidence === 'MEDIUM' ? 6 : parseInt(b.confidence) || 5
-      return confB - confA
+      if (sortBy === 'confidence') {
+        return parseConf(b.confidence) - parseConf(a.confidence)
+      }
+      if (sortBy === 'return') {
+        const retA = a.pct_change ?? 0
+        const retB = b.pct_change ?? 0
+        return retB - retA
+      }
+      // date
+      const dateA = a.signaled_at || ''
+      const dateB = b.signaled_at || ''
+      return dateB.localeCompare(dateA)
     })
     return result
-  }, [data, confidence, outcome, sector, signalType, signalAction])
+  }, [data, confidence, outcome, sector, signalType, signalAction, sortBy])
 
   if (isLoading) return <div className="text-content-muted text-sm py-8 text-center">Loading signals...</div>
   if (!data?.length) return <div className="text-content-faint text-sm py-8 text-center">No signals yet. Run a scan to get started.</div>
+
+  const sortPill = (key: SortBy, label: string) => (
+    <button
+      onClick={() => setSortBy(key)}
+      className={`px-3 py-1 text-sm rounded-full transition ${
+        sortBy === key
+          ? 'bg-blue-600 text-white'
+          : 'bg-surface-secondary text-content-muted hover:text-content-secondary'
+      }`}
+    >
+      {label}
+    </button>
+  )
 
   return (
     <div>
@@ -86,13 +117,13 @@ export default function SignalFeed() {
             <button
               key={t}
               onClick={() => setSignalAction(t)}
-              className={`px-3 py-1 text-xs rounded-full transition ${
+              className={`px-3 py-1 text-sm rounded-full transition ${
                 signalAction === t
                   ? t === 'BUY' ? 'bg-green-600 text-white' :
                     t === 'SELL' ? 'bg-red-600 text-white' :
                     t === 'CONFLICTED' ? 'bg-orange-600 text-white' :
                     'bg-blue-600 text-white'
-                  : 'bg-surface-secondary text-content-faint hover:text-content-secondary'
+                  : 'bg-surface-secondary text-content-muted hover:text-content-secondary'
               }`}
             >
               {t === 'All' ? 'All Signals' : SIGNAL_LABELS[t] || t}
@@ -108,10 +139,10 @@ export default function SignalFeed() {
             <button
               key={t}
               onClick={() => setSignalType(t)}
-              className={`px-3 py-1 text-xs rounded-full transition ${
+              className={`px-3 py-1 text-sm rounded-full transition ${
                 signalType === t
                   ? 'bg-blue-600 text-white'
-                  : 'bg-surface-secondary text-content-faint hover:text-content-secondary'
+                  : 'bg-surface-secondary text-content-muted hover:text-content-secondary'
               }`}
             >
               {t === 'All' ? 'All Types' : TYPE_LABELS[t] || t}
@@ -126,11 +157,23 @@ export default function SignalFeed() {
         sector={sector} onSector={setSector}
         sectors={sectors}
       />
+
+      {/* Sort bar */}
+      <div className="flex items-center gap-2 mb-4">
+        <span className="text-xs text-content-faint">Sort by:</span>
+        {sortPill('confidence', 'Confidence')}
+        {sortPill('return', 'Return')}
+        {sortPill('date', 'Date')}
+        <span className="text-sm text-content-faint ml-auto">{filtered.length} signals</span>
+      </div>
+
       {filtered.length === 0 ? (
         <div className="text-content-faint text-sm py-8 text-center">No signals match the selected filters.</div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 items-start">
-          {filtered.map((signal: any) => <SignalCard key={signal.id} signal={signal} />)}
+        <div className="grid gap-4 md:grid-cols-2 items-start">
+          {filtered.map((signal: any, i: number) => (
+            <SignalCard key={signal.id} signal={signal} rank={i + 1} />
+          ))}
         </div>
       )}
     </div>
