@@ -48,7 +48,8 @@ def init_db() -> None:
             reason                  TEXT,
             risk                    TEXT,
             news_json               TEXT,
-            analysis_json           TEXT
+            analysis_json           TEXT,
+            signal_type             TEXT DEFAULT 'MOMENTUM'
         );
 
         CREATE TABLE IF NOT EXISTS signal_performance (
@@ -104,6 +105,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(signals)").fetchall()}
     if "analysis_json" not in cols:
         conn.execute("ALTER TABLE signals ADD COLUMN analysis_json TEXT")
+    if "signal_type" not in cols:
+        conn.execute("ALTER TABLE signals ADD COLUMN signal_type TEXT DEFAULT 'MOMENTUM'")
 
 
 def save_signal(signal: dict, market_context: dict = None) -> int:
@@ -117,8 +120,8 @@ def save_signal(signal: dict, market_context: dict = None) -> int:
                 earnings_within_7d, earnings_date, sentiment_score,
                 vix_at_signal, spy_wow_pct,
                 trend_1d, trend_1w, trend_1m,
-                reason, risk, news_json, analysis_json
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                reason, risk, news_json, analysis_json, signal_type
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             signal.get("ticker"),
             signal.get("name"),
@@ -144,6 +147,7 @@ def save_signal(signal: dict, market_context: dict = None) -> int:
             signal.get("risk"),
             json.dumps(signal.get("news", [])),
             json.dumps(signal.get("analysis")) if signal.get("analysis") else None,
+            signal.get("signal_type", "MOMENTUM"),
         ))
         return cur.lastrowid
 

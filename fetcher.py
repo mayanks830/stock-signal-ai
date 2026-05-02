@@ -217,21 +217,12 @@ def fetch_candidates(tickers: list[str]) -> list[dict]:
     candidates.sort(key=lambda x: x["wow_change_pct"], reverse=True)
     top = candidates[:TOP_N_STOCKS]
 
-    # Fetch and score news (best effort — stocks without news still proceed)
+    # Fetch and score news
     print(f"Fetching news for {len(top)} stocks...")
-    news_count = 0
-    for i, stock in enumerate(top):
-        print(f"  [{i+1}/{len(top)}] {stock['ticker']} news    ", end="\r")
-        raw_news = fetch_news(stock["ticker"])
-        if raw_news:
-            stock["news"] = label_headlines(raw_news)
-            stock["sentiment_score"] = score_headlines(raw_news)
-            news_count += 1
-        else:
-            stock["sentiment_score"] = 0.0
-        time.sleep(0.4)
+    _enrich_news(top)
 
-    print(f"\n{news_count}/{len(top)} stocks with news. Sending all {len(top)} to AI.")
+    news_count = sum(1 for s in top if s.get("news"))
+    print(f"{news_count}/{len(top)} stocks with news. Sending all {len(top)} to AI.")
     return top
 
 
@@ -303,6 +294,237 @@ def _fetch_price_data_no_filter(ticker: str, range: str = "30d", interval: str =
     except Exception as e:
         print(f"  [!] {ticker}: {e}")
         return None
+
+
+def _build_candidate(ticker: str, price_data: dict, spy_wow: float | None,
+                     earnings_map: dict) -> dict:
+    """Build a standard candidate dict from price data."""
+    rs = round(price_data["wow_change_pct"] - spy_wow, 2) if spy_wow is not None else None
+    earnings_date = earnings_map.get(ticker)
+    return {
+        "ticker": ticker,
+        "sector": SECTOR_MAP.get(ticker, "Other"),
+        "revenue": ">$1B",
+        "current_price": price_data["current_price"],
+        "wow_change_pct": price_data["wow_change_pct"],
+        "volume_ratio": price_data["volume_ratio"],
+        "range_position": price_data["range_position"],
+        "trend_1d": price_data["trend_1d"],
+        "trend_1w": price_data["trend_1w"],
+        "trend_1m": price_data["trend_1m"],
+        "relative_strength_vs_spy": rs,
+        "earnings_within_7d": earnings_date is not None and (
+            datetime.fromisoformat(earnings_date).date() - datetime.now().date()
+        ).days <= 7,
+        "earnings_date": earnings_date,
+        "news": [],
+        "sentiment_score": 0.0,
+    }
+
+
+def _enrich_news(candidates: list[dict]) -> None:
+    """Fetch and score news for a list of candidates in-place."""
+    for i, stock in enumerate(candidates):
+        print(f"  [{i+1}/{len(candidates)}] {stock['ticker']} news    ", end="\r")
+        raw_news = fetch_news(stock["ticker"])
+        alt_news = fetch_alt_news(stock["ticker"])
+        combined = (raw_news or []) + (alt_news or [])
+        if combined:
+            stock["news"] = label_headlines(combined)
+            stock["sentiment_score"] = score_headlines(combined)
+        time.sleep(0.3)
+    print()
+
+
+def fetch_alt_news(ticker: str) -> list[dict]:
+    """Fetch SEC EDGAR filings (8-K, SC 13D) for early/non-mainstream signals."""
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        url = (
+            f"https://efts.sec.gov/LATEST/search-index?"
+            f"q=%22{ticker}%22&dateRange=custom&startdt={week_ago}&enddt={today}"
+            f"&forms=8-K,SC%2013D,SC%2013G"
+        )
+        resp = fetch_with_retry(
+            url, timeout=10,
+            headers={"User-Agent": "StockSignalAI/1.0 contact@example.com", "Accept": "application/json"},
+        )
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        hits = data.get("hits", {}).get("hits", [])
+        items = []
+        for hit in hits[:3]:
+            src = hit.get("_source", {})
+            form_type = src.get("forms", [""])[0] if src.get("forms") else ""
+            title = f"[SEC {form_type}] {src.get('entity_name', ticker)}: {src.get('file_description', 'Filing')}"
+            filed = src.get("file_date", "recent")
+            items.append({"title": title, "link": "", "date": filed})
+        return items
+    except Exception:
+        return []
+
+
+def fetch_early_candidates(tickers: list[str], spy_wow: float | None,
+                           earnings_map: dict) -> list[dict]:
+    """
+    Early signal pipeline: stocks with unusual volume but price hasn't moved yet.
+    Catches accumulation before a breakout.
+    """
+    print("\n[Early Signals] Scanning for accumulation patterns...")
+    candidates = []
+    for ticker in tickers:
+        if was_recently_signaled(ticker):
+            continue
+        price_data = fetch_price_data(ticker)
+        if not price_data:
+            time.sleep(0.3)
+            continue
+        wow = price_data["wow_change_pct"]
+        vol = price_data["volume_ratio"]
+        # Hasn't moved much but volume is elevated
+        if -1.0 <= wow <= 1.5 and vol >= 1.3:
+            candidates.append(_build_candidate(ticker, price_data, spy_wow, earnings_map))
+        time.sleep(0.3)
+
+    print(f"[Early Signals] {len(candidates)} stocks with unusual volume + flat price.")
+    if candidates:
+        candidates.sort(key=lambda x: x["volume_ratio"], reverse=True)
+        top = candidates[:15]
+        print(f"[Early Signals] Fetching news for top {len(top)}...")
+        _enrich_news(top)
+        # Only keep candidates that have news (something is brewing)
+        top = [c for c in top if c.get("news")]
+        print(f"[Early Signals] {len(top)} with news catalyst.")
+        return top
+    return []
+
+
+def fetch_dip_candidates(tickers: list[str], spy_wow: float | None,
+                         earnings_map: dict) -> list[dict]:
+    """
+    Buy-the-dip pipeline: strong stocks that dropped significantly.
+    Catches overreactions and capitulation.
+    """
+    print("\n[Dip Signals] Scanning for oversold quality stocks...")
+    candidates = []
+    for ticker in tickers:
+        if was_recently_signaled(ticker):
+            continue
+        price_data = fetch_price_data(ticker)
+        if not price_data:
+            time.sleep(0.3)
+            continue
+        wow = price_data["wow_change_pct"]
+        range_pos = price_data["range_position"]
+        vol = price_data["volume_ratio"]
+        # Meaningful drop, near bottom of range, on volume
+        if wow <= -3.0 and range_pos <= 30 and vol >= 1.2:
+            candidates.append(_build_candidate(ticker, price_data, spy_wow, earnings_map))
+        time.sleep(0.3)
+
+    print(f"[Dip Signals] {len(candidates)} stocks with significant pullback.")
+    if candidates:
+        candidates.sort(key=lambda x: x["wow_change_pct"])  # most beaten down first
+        top = candidates[:15]
+        print(f"[Dip Signals] Fetching news for top {len(top)}...")
+        _enrich_news(top)
+        return top
+    return []
+
+
+def fetch_pullback_candidates(tickers: list[str], spy_wow: float | None,
+                              earnings_map: dict) -> list[dict]:
+    """
+    Pullback entry pipeline: stocks in uptrend that pulled back to support.
+    Better entry than chasing breakouts.
+    """
+    print("\n[Pullback Signals] Scanning for pullbacks in uptrends...")
+    candidates = []
+    for ticker in tickers:
+        if was_recently_signaled(ticker):
+            continue
+        price_data = fetch_price_data(ticker)
+        if not price_data:
+            time.sleep(0.3)
+            continue
+        wow = price_data["wow_change_pct"]
+        range_pos = price_data["range_position"]
+        trend_1m = price_data["trend_1m"]
+        # Uptrend (1m) but pulling back this week, mid-range position
+        if trend_1m == "up" and -5.0 <= wow <= -1.0 and 30 <= range_pos <= 60:
+            candidates.append(_build_candidate(ticker, price_data, spy_wow, earnings_map))
+        time.sleep(0.3)
+
+    print(f"[Pullback Signals] {len(candidates)} stocks pulling back in uptrends.")
+    if candidates:
+        candidates.sort(key=lambda x: x["wow_change_pct"])
+        top = candidates[:15]
+        print(f"[Pullback Signals] Fetching news for top {len(top)}...")
+        _enrich_news(top)
+        return top
+    return []
+
+
+def fetch_congress_frontrun_candidates(spy_wow: float | None,
+                                       earnings_map: dict) -> list[dict]:
+    """
+    Congress front-running pipeline: politicians bought recently but price hasn't moved.
+    Uses existing congress_trades DB data.
+    """
+    from database import get_conn
+    print("\n[Congress Signals] Scanning for front-running opportunities...")
+
+    # Get recent congress BUY trades from DB
+    cutoff = (datetime.now() - timedelta(days=45)).strftime("%Y-%m-%d")
+    try:
+        with get_conn() as conn:
+            rows = conn.execute("""
+                SELECT DISTINCT ticker, filer, party, tx_date, value_numeric
+                FROM congress_trades
+                WHERE action = 'BUY' AND tx_date >= ?
+                  AND (value_numeric IS NULL OR value_numeric >= 100000)
+                ORDER BY tx_date DESC
+            """, (cutoff,)).fetchall()
+        trades = [dict(r) for r in rows]
+    except Exception:
+        trades = []
+
+    if not trades:
+        print("[Congress Signals] No recent congress BUY trades found.")
+        return []
+
+    # Group by ticker, get unique tickers
+    ticker_trades: dict[str, list[dict]] = {}
+    for t in trades:
+        ticker_trades.setdefault(t["ticker"], []).append(t)
+
+    print(f"[Congress Signals] {len(ticker_trades)} tickers with congress buys in last 45 days.")
+
+    candidates = []
+    for ticker, ctrades in ticker_trades.items():
+        if was_recently_signaled(ticker):
+            continue
+        price_data = fetch_price_data(ticker)
+        if not price_data:
+            time.sleep(0.3)
+            continue
+        # Only signal if price hasn't run away yet (< +5% WoW)
+        if price_data["wow_change_pct"] <= 5.0:
+            cand = _build_candidate(ticker, price_data, spy_wow, earnings_map)
+            # Attach congress trade info for the AI prompt
+            cand["congress_trades"] = ctrades[:3]
+            candidates.append(cand)
+        time.sleep(0.3)
+
+    print(f"[Congress Signals] {len(candidates)} tickers haven't run yet.")
+    if candidates:
+        top = candidates[:15]
+        print(f"[Congress Signals] Fetching news for top {len(top)}...")
+        _enrich_news(top)
+        return top
+    return []
 
 
 def fetch_watchlist_data(tickers: list[str], include_technicals: bool = True) -> list[dict]:

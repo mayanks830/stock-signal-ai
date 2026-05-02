@@ -7,8 +7,17 @@ from datetime import datetime
 
 from config import SCAN_HOUR, FASTAPI_PORT, WATCHLIST_SCAN_ENABLED
 from database import init_db, get_watchlist, is_congress_alert_sent, mark_congress_alert_sent
-from fetcher import get_sp500_tickers, fetch_candidates, fetch_watchlist_data
-from analyzer import analyze_stocks, analyze_watchlist
+from fetcher import (
+    get_sp500_tickers, fetch_candidates, fetch_watchlist_data,
+    fetch_early_candidates, fetch_dip_candidates, fetch_pullback_candidates,
+    fetch_congress_frontrun_candidates, get_spy_wow,
+)
+from analyzer import (
+    analyze_stocks, analyze_watchlist,
+    analyze_early_signals, analyze_dip_signals, analyze_pullback_signals,
+    analyze_congress_signals,
+)
+from earnings import get_earnings_dates
 from notifier import send_signals, send_watchlist_report, send_congress_alert
 from history import record_signals
 from market_context import build_market_context
@@ -21,28 +30,68 @@ def run_scan():
     print(f"  Market Scan Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}")
 
-    print("\n[1/5] Fetching S&P 500 tickers...")
     tickers = get_sp500_tickers()
-
-    print("\n[2/5] Fetching market context...")
     market_context = build_market_context()
     print(f"  VIX: {market_context.get('vix')} | SPY WoW: {market_context.get('spy_wow_pct'):+.2f}%")
 
-    print("\n[3/5] Fetching stock data...")
+    spy_wow = get_spy_wow()
+    earnings_map = get_earnings_dates(tickers)
+
+    all_signals = []
+
+    # Pipeline 1: Momentum (existing)
+    print("\n[Pipeline 1/5] Momentum signals...")
     candidates = fetch_candidates(tickers)
-    if not candidates:
-        print("No candidates found.")
-        send_signals([], market_context)
-        return
+    if candidates:
+        signals = analyze_stocks(candidates, market_context)
+        all_signals.extend(signals)
 
-    print("\n[4/5] Running AI analysis...")
-    signals = analyze_stocks(candidates, market_context)
+    # Pipeline 2: Early signals (accumulation)
+    print("\n[Pipeline 2/5] Early signals...")
+    try:
+        early = fetch_early_candidates(tickers, spy_wow, earnings_map)
+        if early:
+            signals = analyze_early_signals(early, market_context)
+            all_signals.extend(signals)
+    except Exception as e:
+        print(f"  [!] Early signal pipeline failed: {e}")
 
-    print("\n[5/5] Sending signals to Discord...")
-    send_signals(signals, market_context)
+    # Pipeline 3: Buy-the-dip
+    print("\n[Pipeline 3/5] Dip signals...")
+    try:
+        dips = fetch_dip_candidates(tickers, spy_wow, earnings_map)
+        if dips:
+            signals = analyze_dip_signals(dips, market_context)
+            all_signals.extend(signals)
+    except Exception as e:
+        print(f"  [!] Dip signal pipeline failed: {e}")
 
-    if signals:
-        record_signals(signals, market_context)
+    # Pipeline 4: Pullback entries
+    print("\n[Pipeline 4/5] Pullback signals...")
+    try:
+        pullbacks = fetch_pullback_candidates(tickers, spy_wow, earnings_map)
+        if pullbacks:
+            signals = analyze_pullback_signals(pullbacks, market_context)
+            all_signals.extend(signals)
+    except Exception as e:
+        print(f"  [!] Pullback signal pipeline failed: {e}")
+
+    # Pipeline 5: Congress front-running
+    print("\n[Pipeline 5/5] Congress signals...")
+    try:
+        congress = fetch_congress_frontrun_candidates(spy_wow, earnings_map)
+        if congress:
+            signals = analyze_congress_signals(congress, market_context)
+            all_signals.extend(signals)
+    except Exception as e:
+        print(f"  [!] Congress signal pipeline failed: {e}")
+
+    # Send and record all signals
+    print(f"\nTotal signals across all pipelines: {len(all_signals)}")
+    send_signals(all_signals, market_context)
+
+    if all_signals:
+        record_signals(all_signals, market_context)
 
     print(f"\nScan complete at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 

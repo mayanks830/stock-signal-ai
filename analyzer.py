@@ -16,34 +16,7 @@ TREND_ARROW = {"up": "↑", "down": "↓"}
 
 
 def build_prompt(stocks: list[dict], market_context: dict) -> str:
-    lines = []
-    for s in stocks:
-        # Labeled news with sentiment
-        news_parts = []
-        for n in s.get("news", []):
-            label = n.get("sentiment", "NEUTRAL")
-            news_parts.append(f"[{label}] {n['title']}")
-        news_text = " | News: " + "; ".join(news_parts) if news_parts else ""
-
-        trends = (
-            f"1d:{TREND_ARROW.get(s.get('trend_1d',''), '?')} "
-            f"1w:{TREND_ARROW.get(s.get('trend_1w',''), '?')} "
-            f"1m:{TREND_ARROW.get(s.get('trend_1m',''), '?')}"
-        )
-        rs = s.get("relative_strength_vs_spy")
-        rs_text = f"vs SPY: {rs:+.1f}%" if rs is not None else ""
-        vol_text = f"{s.get('volume_ratio', '?')}x vol"
-        earn_text = f"⚠️ EARNINGS {s['earnings_date']}" if s.get("earnings_within_7d") else ""
-        sentiment = f"sentiment:{s.get('sentiment_score', 0):+.1f}"
-
-        lines.append(
-            f"- {s['ticker']} ({s['sector']}): "
-            f"${s['current_price']} WoW {s['wow_change_pct']:+.2f}% | "
-            f"{trends} | {rs_text} | {vol_text} | {sentiment} "
-            f"{earn_text}{news_text}"
-        )
-
-    stock_block = "\n".join(lines)
+    stock_block = "\n".join(_format_stock_line(s) for s in stocks)
     market_block = format_for_prompt(market_context)
 
     return f"""{market_block}
@@ -256,44 +229,236 @@ def analyze_watchlist(stocks: list[dict], market_context: dict) -> list[dict]:
         return []
 
 
-def analyze_stocks(stocks: list[dict], market_context: dict) -> list[dict]:
+def _format_stock_line(s: dict) -> str:
+    """Format a single stock's data into a prompt line."""
+    news_parts = []
+    for n in s.get("news", []):
+        label = n.get("sentiment", "NEUTRAL")
+        news_parts.append(f"[{label}] {n['title']}")
+    news_text = " | News: " + "; ".join(news_parts) if news_parts else ""
+
+    trends = (
+        f"1d:{TREND_ARROW.get(s.get('trend_1d',''), '?')} "
+        f"1w:{TREND_ARROW.get(s.get('trend_1w',''), '?')} "
+        f"1m:{TREND_ARROW.get(s.get('trend_1m',''), '?')}"
+    )
+    rs = s.get("relative_strength_vs_spy")
+    rs_text = f"vs SPY: {rs:+.1f}%" if rs is not None else ""
+    vol_text = f"{s.get('volume_ratio', '?')}x vol"
+    earn_text = f"⚠️ EARNINGS {s['earnings_date']}" if s.get("earnings_within_7d") else ""
+    sentiment = f"sentiment:{s.get('sentiment_score', 0):+.1f}"
+
+    # Congress trade info (if available)
+    cong_text = ""
+    cong_trades = s.get("congress_trades", [])
+    if cong_trades:
+        cong_parts = [f"{t['filer']}({t['party']}) bought on {t['tx_date']}" for t in cong_trades[:3]]
+        cong_text = f" | Congress: {'; '.join(cong_parts)}"
+
+    return (
+        f"- {s['ticker']} ({s['sector']}): "
+        f"${s['current_price']} WoW {s['wow_change_pct']:+.2f}% | "
+        f"{trends} | {rs_text} | {vol_text} | {sentiment} "
+        f"{earn_text}{news_text}{cong_text}"
+    )
+
+
+# ── Structured analysis JSON template (shared across prompts) ────────────────
+_ANALYSIS_JSON_TEMPLATE = """
+Respond ONLY with valid JSON array. Each object must include:
+- ticker, name, sector, confidence (HIGH or MEDIUM only)
+- wow_change_pct, current_price (copy from data)
+- price_target: realistic target price
+- stop_loss: stop loss price
+- analysis object with: business_model, financial_health, competitive_position,
+  catalyst, headwinds, valuation, technical_summary, bull_case, bear_case, recommendation
+
+If no strong signals, return: []
+"""
+
+
+def build_early_signal_prompt(stocks: list[dict], market_context: dict) -> str:
+    """Prompt for early/accumulation signals — unusual volume, price hasn't moved."""
+    stock_block = "\n".join(_format_stock_line(s) for s in stocks)
+    market_block = format_for_prompt(market_context)
+
+    return f"""{market_block}
+
+You are a professional stock analyst specializing in EARLY DETECTION of institutional accumulation.
+
+These stocks show UNUSUAL VOLUME but the price hasn't moved significantly yet. This pattern often precedes breakouts — smart money accumulating before a catalyst becomes mainstream.
+
+STOCKS (unusual volume, minimal price movement):
+{stock_block}
+
+ANALYSIS RULES:
+- Focus on WHY volume is elevated despite flat price — this is the key signal
+- SEC filings (8-K, SC 13D) are the earliest signals — prioritize these over mainstream news
+- Look for: upcoming catalysts, M&A rumors, activist stakes, contract wins, insider buying
+- HIGH confidence: clear catalyst in news/filings + volume >1.5x + price hasn't moved
+- MEDIUM confidence: elevated volume + circumstantial evidence of upcoming catalyst
+- These are EARLY signals — price targets can be more aggressive (+15-25%)
+- Stop loss should be tight (-5 to -7%) since these are speculative entries
+
+{_ANALYSIS_JSON_TEMPLATE}"""
+
+
+def build_dip_prompt(stocks: list[dict], market_context: dict) -> str:
+    """Prompt for buy-the-dip signals — quality stocks that dropped."""
+    stock_block = "\n".join(_format_stock_line(s) for s in stocks)
+    market_block = format_for_prompt(market_context)
+
+    return f"""{market_block}
+
+You are a professional stock analyst specializing in CONTRARIAN value opportunities.
+
+These are large-cap stocks that have DROPPED significantly this week. Your job is to determine if this is a BUYING OPPORTUNITY (overreaction) or a justified decline (fundamental deterioration).
+
+STOCKS (all dropped 3%+ this week):
+{stock_block}
+
+ANALYSIS RULES:
+- ONLY recommend BUY if the drop appears to be an overreaction
+- Overreaction signs: broad market selloff, sector rotation (not company-specific), analyst downgrade on sentiment not fundamentals
+- Red flags (do NOT recommend): earnings miss, guidance cut, product failure, regulatory action, fraud
+- HIGH confidence: strong company + clear overreaction + support level holding + sentiment extreme
+- MEDIUM confidence: likely overreaction but needs more confirmation
+- Price target: recovery to pre-drop levels (+10-15%)
+- Stop loss: -5 to -8% below current (wider than usual since dip entries are volatile)
+- In the analysis, explicitly state WHY the drop is temporary vs permanent
+
+{_ANALYSIS_JSON_TEMPLATE}"""
+
+
+def build_pullback_prompt(stocks: list[dict], market_context: dict) -> str:
+    """Prompt for pullback entry signals — uptrend stocks at support."""
+    stock_block = "\n".join(_format_stock_line(s) for s in stocks)
+    market_block = format_for_prompt(market_context)
+
+    return f"""{market_block}
+
+You are a professional stock analyst specializing in PULLBACK ENTRIES in uptrending stocks.
+
+These stocks have strong 1-month uptrends but pulled back this week. The question: is the pullback a healthy buying opportunity, or is the trend reversing?
+
+STOCKS (uptrend + weekly pullback):
+{stock_block}
+
+ANALYSIS RULES:
+- Healthy pullback signs: low volume on pullback (no distribution), holding above key support, positive news backdrop intact
+- Trend reversal signs: high volume on pullback (distribution), breaking below support, negative news catalyst
+- HIGH confidence: uptrend intact + low-volume pullback + support holding + positive sentiment
+- MEDIUM confidence: uptrend likely intact but one concern (e.g., volume slightly elevated)
+- Price target: retest of recent highs (+8-15%)
+- Stop loss: tight, just below the pullback low (-4 to -6%)
+
+{_ANALYSIS_JSON_TEMPLATE}"""
+
+
+def build_congress_prompt(stocks: list[dict], market_context: dict) -> str:
+    """Prompt for congress front-running signals — politicians bought, price hasn't moved."""
+    stock_block = "\n".join(_format_stock_line(s) for s in stocks)
+    market_block = format_for_prompt(market_context)
+
+    return f"""{market_block}
+
+You are a professional stock analyst evaluating CONGRESSIONAL TRADE signals.
+
+Members of Congress recently bought these stocks (disclosed via financial filings). Due to reporting delays, these trades happened 30-45 days ago. The price hasn't moved significantly since their purchase — meaning we may still have an edge.
+
+STOCKS (congress members bought recently, price flat since):
+{stock_block}
+
+ANALYSIS RULES:
+- Congressional members may have informational advantages (upcoming legislation, contracts, regulatory decisions)
+- Evaluate: What could the congress member know? Is there pending legislation or contracts in their committee jurisdiction?
+- Cross-reference with news — any hints of upcoming catalysts?
+- HIGH confidence: multiple congress members buying same stock + relevant committee membership + positive news backdrop
+- MEDIUM confidence: single congress member buying + plausible thesis
+- Price target: +10-20% (these are medium-term plays, not day trades)
+- Stop loss: -6 to -8%
+- In the analysis catalyst field, mention the congress member(s) and their party/chamber
+
+{_ANALYSIS_JSON_TEMPLATE}"""
+
+
+def _run_analysis(prompt: str, stocks: list[dict], signal_type: str, label: str) -> list[dict]:
+    """Generic analysis runner: send prompt to Claude, parse response, merge data."""
     if not stocks:
         return []
 
-    print(f"Sending {len(stocks)} stocks to Claude for analysis...")
+    print(f"[{label}] Sending {len(stocks)} stocks to Claude...")
     stock_lookup = {s["ticker"]: s for s in stocks}
 
-    message = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=8192,
-        messages=[{"role": "user", "content": build_prompt(stocks, market_context)}],
-    )
-
-    raw = message.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-
     try:
+        message = client.messages.create(
+            model="claude-opus-4-6",
+            max_tokens=8192,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        raw = message.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+
         signals = json.loads(raw)
         signals = [s for s in signals if s.get("confidence", "").upper() in ("HIGH", "MEDIUM")]
-        # Merge enrichment fields back from original stock data
+
         for s in signals:
             orig = stock_lookup.get(s["ticker"], {})
             for key in ("volume_ratio", "range_position", "relative_strength_vs_spy",
                         "earnings_within_7d", "earnings_date", "sentiment_score",
                         "trend_1d", "trend_1w", "trend_1m", "news"):
                 s[key] = orig.get(key)
-            # Build backward-compatible reason/risk from structured analysis
+            s["signal_type"] = signal_type
+            # Backward-compatible reason/risk from structured analysis
             analysis = s.get("analysis", {})
             if analysis:
                 s["reason"] = f"{analysis.get('catalyst', '')} {analysis.get('technical_summary', '')}".strip()
                 s["risk"] = analysis.get("headwinds", s.get("risk", ""))
-        signals = apply_sector_cap(signals)
-        print(f"Claude identified {len(signals)} buy signal(s).")
+
+        print(f"[{label}] Claude identified {len(signals)} signal(s).")
         return signals
     except json.JSONDecodeError as e:
-        print(f"[!] Failed to parse Claude response: {e}")
+        print(f"[{label}] Failed to parse Claude response: {e}")
         return []
+    except Exception as e:
+        print(f"[{label}] Analysis failed: {e}")
+        return []
+
+
+def analyze_stocks(stocks: list[dict], market_context: dict) -> list[dict]:
+    signals = _run_analysis(
+        build_prompt(stocks, market_context), stocks, "MOMENTUM", "Momentum"
+    )
+    # Tag existing momentum signals
+    for s in signals:
+        s.setdefault("signal_type", "MOMENTUM")
+    return apply_sector_cap(signals)
+
+
+def analyze_early_signals(stocks: list[dict], market_context: dict) -> list[dict]:
+    return _run_analysis(
+        build_early_signal_prompt(stocks, market_context), stocks, "EARLY", "Early Signals"
+    )
+
+
+def analyze_dip_signals(stocks: list[dict], market_context: dict) -> list[dict]:
+    return _run_analysis(
+        build_dip_prompt(stocks, market_context), stocks, "DIP_BUY", "Dip Signals"
+    )
+
+
+def analyze_pullback_signals(stocks: list[dict], market_context: dict) -> list[dict]:
+    return _run_analysis(
+        build_pullback_prompt(stocks, market_context), stocks, "PULLBACK", "Pullback Signals"
+    )
+
+
+def analyze_congress_signals(stocks: list[dict], market_context: dict) -> list[dict]:
+    return _run_analysis(
+        build_congress_prompt(stocks, market_context), stocks, "CONGRESS", "Congress Signals"
+    )

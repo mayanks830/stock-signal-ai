@@ -12,6 +12,14 @@ const CONF_BADGE: Record<string, string> = {
 }
 const TREND_ARROW: Record<string, string> = { up: '\u2191', down: '\u2193' }
 
+const SIGNAL_TYPE_BADGE: Record<string, { label: string; color: string }> = {
+  MOMENTUM: { label: 'Momentum', color: 'bg-green-500/20 text-green-400' },
+  EARLY: { label: 'Early Signal', color: 'bg-blue-500/20 text-blue-400' },
+  DIP_BUY: { label: 'Buy the Dip', color: 'bg-orange-500/20 text-orange-400' },
+  PULLBACK: { label: 'Pullback', color: 'bg-purple-500/20 text-purple-400' },
+  CONGRESS: { label: 'Congress', color: 'bg-yellow-500/20 text-yellow-400' },
+}
+
 // Score breakdown factor logic
 type FactorStatus = 'pass' | 'partial' | 'fail'
 interface Factor { label: string; status: FactorStatus; detail: string }
@@ -118,6 +126,11 @@ export default function SignalCard({ signal }: { signal: any }) {
           <div className="flex items-center gap-2">
             <span className="text-lg font-bold text-content-primary">{signal.ticker}</span>
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${CONF_BADGE[conf]}`}>{conf}</span>
+            {signal.signal_type && signal.signal_type !== 'MOMENTUM' && (
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${SIGNAL_TYPE_BADGE[signal.signal_type]?.color || 'bg-gray-500/20 text-gray-400'}`}>
+                {SIGNAL_TYPE_BADGE[signal.signal_type]?.label || signal.signal_type}
+              </span>
+            )}
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
               signal.outcome === 'WIN' ? 'bg-green-500/20 text-green-400' :
               signal.outcome === 'LOSS' ? 'bg-red-500/20 text-red-400' :

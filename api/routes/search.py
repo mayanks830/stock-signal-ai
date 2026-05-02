@@ -273,6 +273,13 @@ def search_stock(
                 raw = raw[4:]
             raw = raw.strip()
         ai_analysis = json.loads(raw)
+        # If the model put analysis fields at root level instead of nested, wrap them
+        if "analysis" not in ai_analysis and "bull_case" in ai_analysis:
+            nested_keys = ["business_model", "financial_health", "competitive_position",
+                           "catalyst", "headwinds", "valuation", "technical_summary",
+                           "bull_case", "bear_case", "recommendation"]
+            ai_analysis["analysis"] = {k: ai_analysis.pop(k) for k in nested_keys if k in ai_analysis}
+        print(f"[Search] AI analysis keys: {list(ai_analysis.keys())}")
     except Exception as e:
         ai_analysis = {"outlook": "UNKNOWN", "signal": "HOLD", "reasoning": f"AI analysis failed: {e}"}
 
